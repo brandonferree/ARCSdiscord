@@ -61,12 +61,14 @@ JVM image compositor) and recommends one.
 | [`docs/DISCORD-UX.md`](docs/DISCORD-UX.md) | Channel layout, slash commands, turn/ping flow, table talk |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phased milestones from "echo a legal-action list" to "full Blighted Reach campaign" |
 | [`docs/PROJECT-SETUP.md`](docs/PROJECT-SETUP.md) | GitHub org structure: labels, milestones, and seed issues to create |
+| [`docs/M1.md`](docs/M1.md) | Milestone 1: compiling the vendored HRF engine on the JVM (analysis + steps) |
 
 ## Module layout (scaffold)
 
 ```
-build.sbt                     multi-module build: engine-bridge, renderer, bot
+build.sbt                     multi-module build
 project/
+hrf-engine/                   VENDORED HRF Arcs rules engine (MIT) — see docs/M1.md
 modules/
   engine-bridge/              drives the HRF Arcs engine headless; owns the journal
   renderer/                   headless board -> PNG
@@ -74,13 +76,15 @@ modules/
 docs/                         the design
 ```
 
+> The HRF rules engine is vendored under `hrf-engine/` (MIT-licensed) because a
+> session scoped to this repo can't fetch it elsewhere. Getting it to compile on
+> the JVM is Milestone 1 — see [`docs/M1.md`](docs/M1.md).
+
 ## Prerequisites for Milestone 1
 
-- A JVM-published build of the HRF Arcs engine (HRF cross-compiled to JVM,
-  excluding the Scala.js-only DOM/UI sources). See `docs/ARCHITECTURE.md` →
-  "Getting HRF onto the JVM classpath".
-- A Discord application + bot token.
-- JDK 17+, sbt.
+- JDK 17+, sbt. (The HRF Arcs engine is already vendored under `hrf-engine/`;
+  M1 is compiling it for the JVM — `sbt hrfEngine/compile` — see `docs/M1.md`.)
+- A Discord application + bot token (only needed at M4).
 
 ## License
 
