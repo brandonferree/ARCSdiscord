@@ -60,6 +60,7 @@ JVM image compositor) and recommends one.
 | [`docs/RENDERING.md`](docs/RENDERING.md) | The headless board renderer (the new component) |
 | [`docs/DISCORD-UX.md`](docs/DISCORD-UX.md) | Channel layout, slash commands, turn/ping flow, table talk |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phased milestones from "echo a legal-action list" to "full Blighted Reach campaign" |
+| [`docs/PROJECT-SETUP.md`](docs/PROJECT-SETUP.md) | GitHub org structure: labels, milestones, and seed issues to create |
 
 ## Module layout (scaffold)
 

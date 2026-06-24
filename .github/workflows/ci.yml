@@ -1,0 +1,35 @@
+name: CI
+
+# Compiles the scaffold so the build stays green as modules get wired up.
+# The current scaffold (engine-bridge, renderer, bot) is self-contained Scala
+# and compiles on its own. Once the HRF Arcs engine is added as a JVM dependency
+# (Milestone 1), this same job will validate the real integration.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: sbt
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Compile
+        run: sbt compile
+
+      # Enable once tests exist:
+      # - name: Test
+      #   run: sbt test
