@@ -1,0 +1,20 @@
+# sbt / Scala
+target/
+project/target/
+project/project/
+.bsp/
+.metals/
+.bloop/
+
+# HRF Arcs art assets mirrored locally for the renderer (large; fetch separately)
+/assets/
+
+# Secrets
+.env
+*.token
+application.conf.local
+
+# OS / editor
+.DS_Store
+.idea/
+*.iml
