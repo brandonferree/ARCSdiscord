@@ -33,6 +33,12 @@ jobs:
       - name: Headless self-play smoke (M1)
         run: sbt "selfplay/runMain arcsbot.selfplay.SelfPlay"
 
+      - name: Engine-bridge self-test (M2 — create/pending/apply/load + replay)
+        run: sbt "engineBridge/runMain arcsbot.engine.Repl selftest"
+
+      - name: Engine-bridge SQL journal test (M2 — persist/conflict/reload)
+        run: sbt "engineBridge/runMain arcsbot.engine.Repl sqltest"
+
       # Enable once tests exist:
       # - name: Test
       #   run: sbt test

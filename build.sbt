@@ -93,7 +93,12 @@ lazy val selfplay = (project in file("modules/selfplay"))
 lazy val engineBridge = (project in file("modules/engine-bridge"))
   .dependsOn(hrfEngine)
   .settings(
-    name := "engine-bridge"
+    name := "engine-bridge",
+    libraryDependencies ++= Seq(
+      // JDBC SQLite driver for the SQL-backed journal (also works against
+      // Postgres via a different Connection; SQL is standard).
+      "org.xerial" % "sqlite-jdbc" % "3.45.3.0"
+    )
   )
 
 // Game state -> PNG. See docs/RENDERING.md.
