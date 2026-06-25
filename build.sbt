@@ -33,19 +33,39 @@ lazy val hrfEngine = (project in file("hrf-engine"))
     name := "hrf-engine",
     // top-level *.scala AND the arcs/ subdir (recursive under the base dir):
     Compile / scalaSource := baseDirectory.value,
-    // Exclude Scala.js / DOM / browser-UI sources (basename match also drops
-    // arcs/ui.scala and arcs/styles.scala). This list is the M1 starting point
-    // and may need tuning as `sbt hrfEngine/compile` surfaces stragglers.
+    // Exclude the Scala.js / DOM / browser-UI sources, keeping the *-jvm.scala
+    // shims. Criterion: every excluded file imports a browser package
+    // (org.scalajs.dom / hrf.html / hrf.canvas / hrf.web / sprites) or is a
+    // browser-only build/util script. Basename match — note "ui.scala" drops
+    // BOTH top-level and arcs/ui.scala (both DOM). NOT excluded (JVM-clean and
+    // required by arcs/): selects2.scala (hrf.base.SelectSubset),
+    // new-new-new-tracker.scala (hrf.tracker4), styles.scala (top-level hrf.elem
+    // styles + arcs/styles.scala which defines the arcs.elem package object).
     Compile / unmanagedSources / excludeFilter :=
       "reflect-js.scala" || "log-js.scala" ||
       "canvas.scala" || "html.scala" || "sprites.scala" ||
-      "ui.scala" || "styles.scala" || "web.scala" || "loader.scala" ||
-      "panes.scala" || "panes-again.scala" || "selects2.scala" ||
+      "ui.scala" || "web.scala" || "loader.scala" ||
+      "timeline.scala" ||   // browser variant; timeline-jvm.scala is the JVM stub
+      "journal.scala" ||    // package hrf, imports hrf.web (browser); unused headless
+      "panes.scala" || "panes-again.scala" ||
       "voice.scala" || "quine.scala" || "runner.scala" || "hrf.scala" ||
-      "grey.scala" || "grey-map.scala" || "settings.scala" ||
-      "tracker.scala" || "new-tracker.scala" ||
-      "new-new-tracker.scala" || "new-new-new-tracker.scala" ||
+      "grey.scala" || "grey-map.scala" ||
+      "tracker.scala" || "new-tracker.scala" || "new-new-tracker.scala" ||
       "convert-images.scala" || "extract-logs.scala",
+    // Upstream HRF generates `hrf.BuildInfo` via sbt-buildinfo (base.scala /
+    // host-jvm.scala read .version/.name). We don't vendor it, so synthesize a
+    // minimal equivalent here — keeps hrf-engine/ pristine.
+    Compile / sourceGenerators += Def.task {
+      val f = (Compile / sourceManaged).value / "hrf" / "BuildInfo.scala"
+      IO.write(f,
+        """package hrf
+          |object BuildInfo {
+          |  val name = "hrf-arcs"
+          |  val version = "0.8.140"  // vendored point-in-time HRF version
+          |}
+          |""".stripMargin)
+      Seq(f)
+    }.taskValue,
     libraryDependencies ++= Seq(
       "com.lihaoyi"            %% "fastparse"                 % "3.0.2",
       "com.lihaoyi"            %% "pprint"                    % "0.7.0",
