@@ -5,37 +5,35 @@ get the HRF engine running headless on the JVM (M1) and a picture into Discord
 (M3) early, because those are the two unknowns. Everything after is content and
 polish.
 
+> **Status (2026-06-25): M1 and M2 are complete.** See [STATUS.md](STATUS.md) for
+> the detailed handoff (what's built, how to run it, and where M3 starts).
+
 ## M0 — Foundation (this repo, now)
 - [x] Architecture docs grounded in HRF source.
 - [x] Module scaffold with documented integration seams.
-- [ ] Choose a license; decide vendor-vs-submodule for HRF (see ARCHITECTURE).
+- [x] License decided: HRF vendored under `hrf-engine/` (MIT; see `hrf-engine/LICENSE`).
 
-## M1 — HRF Arcs engine on the JVM *(highest risk; do first)*
+## M1 — HRF Arcs engine on the JVM ✅ *(done 2026-06-24)*
 **Goal:** call the real Arcs engine from a plain JVM `main`, with no browser.
-- [ ] Produce a JVM build of the HRF rules core + `arcs.*` (exclude DOM/UI
-      sources; keep `*-jvm.scala`). See ARCHITECTURE → "Getting HRF onto the JVM
-      classpath".
-- [ ] Verify `Serialize.parseExpr` reflection resolves Arcs action classes on the
-      JVM (`serialize.scala:152`).
-- [ ] Reproduce a headless game loop like `arcs/host.scala` / `BaseHost.main`
-      (`host.scala:136`): create `Game`, drive `performContinue`, auto-resolve
-      oracle continuations, stop at `Ask`.
-- **Demo:** a CLI that plays Arcs against itself (random/AI seats) start→finish,
-  printing the journal. This proves the engine works off-browser. *(This is
-  essentially what `BaseHost` already does — the milestone is mostly build
-  config, not new logic.)*
+- [x] JVM build of the HRF rules core + `arcs.*` (`sbt hrfEngine/compile`; tuned
+      `excludeFilter` + synthesized `hrf.BuildInfo` in build.sbt).
+- [x] `Serialize` reflection verified on the JVM (round-trip stable in self-play).
+- [x] Headless game loop reproduced (`modules/selfplay`, reusing `arcs.CampaignHost`).
+- **Demo:** `sbt "selfplay/runMain arcsbot.selfplay.SelfPlay"` plays a full game
+  start→finish and prints the journal. *(Commits 968dfd5 / dcf0221 / 293f1a3.)*
 
-## M2 — Journal + GameSession
+## M2 — Journal + GameSession ✅ *(done 2026-06-25)*
 **Goal:** persistent, replayable games behind a clean API.
-- [ ] Implement `Journal` (append-only, index-keyed, optimistic concurrency).
-- [ ] Implement `GameSession.load/pending/apply` (`engine-bridge`): replay log →
-      state, surface `Turn(faction, actions)`, apply a chosen `UserAction`,
-      append, advance.
-- [ ] `Elem → markdown` flattener for move text.
-- **Demo:** a REPL/HTTP harness that loads a journal, prints the current legal
-  moves for the active faction, accepts a choice, and advances — no Discord yet.
+- [x] `Journal` (in-memory + `SqlJournal`: JDBC, `(game_id, idx)` PK, optimistic
+      concurrency).
+- [x] `EngineSession.load/pending/apply/undoTo` (`engine-bridge`): replay log →
+      state, surface `Turn`, apply a chosen option, append, advance.
+- [x] `Elem → text` flattener (`ElemText`).
+- **Demo:** `sbt "engineBridge/runMain arcsbot.engine.Repl [selftest|sqltest|play]"`.
+  *(Commit 694dc2e.)* Caveat: multi-act Fates / hidden-info selection is deferred
+  to M5 — the bridge surfaces those as `Rejected` for now.
 
-## M3 — First board render *(second unknown; Path B fast cut)*
+## M3 — First board render *(second unknown; Path B fast cut)* ⬅ **next**
 **Goal:** an image of the live board.
 - [ ] Stand up `BoardRenderer` (Path B: headless-browser screenshot of HRF's own
       Arcs UI pointed at the journal). See RENDERING.
