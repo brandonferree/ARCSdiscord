@@ -18,7 +18,7 @@ ThisBuild / organization := "arcsbot"
 ThisBuild / version      := "0.0.1-SNAPSHOT"
 
 lazy val root = (project in file("."))
-  .aggregate(engineBridge, renderer, bot)   // M1: add `hrfEngine`
+  .aggregate(hrfEngine, selfplay, engineBridge, renderer, bot)
   .settings(name := "arcs-discord")
 
 // --- Vendored HRF Arcs engine, cross-compiled to the JVM -------------------
@@ -91,7 +91,7 @@ lazy val selfplay = (project in file("modules/selfplay"))
 // Drives the HRF Arcs engine headless and owns the journal.
 // The ONLY module that should depend on the HRF engine.
 lazy val engineBridge = (project in file("modules/engine-bridge"))
-  // M1: .dependsOn(hrfEngine) once hrfEngine compiles
+  .dependsOn(hrfEngine)
   .settings(
     name := "engine-bridge"
   )

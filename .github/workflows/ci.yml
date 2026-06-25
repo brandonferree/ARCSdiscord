@@ -1,9 +1,9 @@
 name: CI
 
-# Compiles the scaffold so the build stays green as modules get wired up.
-# The current scaffold (engine-bridge, renderer, bot) is self-contained Scala
-# and compiles on its own. Once the HRF Arcs engine is added as a JVM dependency
-# (Milestone 1), this same job will validate the real integration.
+# Builds the whole project, including the vendored HRF Arcs engine cross-compiled
+# to the JVM (Milestone 1). `sbt compile` builds hrfEngine + the bot modules via
+# the root aggregate; the self-play smoke step proves the engine plays a full
+# Arcs: The Blighted Reach game headless with a round-trippable journal.
 
 on:
   push:
@@ -29,6 +29,9 @@ jobs:
 
       - name: Compile
         run: sbt compile
+
+      - name: Headless self-play smoke (M1)
+        run: sbt "selfplay/runMain arcsbot.selfplay.SelfPlay"
 
       # Enable once tests exist:
       # - name: Test
