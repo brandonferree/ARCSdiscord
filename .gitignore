@@ -18,3 +18,7 @@ application.conf.local
 .DS_Store
 .idea/
 *.iml
+
+# self-play scratch (error dumps from arcs.BaseHost path)
+/arcs/
+target/

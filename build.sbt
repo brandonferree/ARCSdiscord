@@ -76,6 +76,16 @@ lazy val hrfEngine = (project in file("hrf-engine"))
     )
   )
 
+// Headless self-play CLI (M1 proof): drives a full Arcs: The Blighted Reach
+// game off-browser and prints the round-trippable journal. Reuses the vendored
+// arcs.CampaignHost (bot AI + oracle resolution).
+lazy val selfplay = (project in file("modules/selfplay"))
+  .dependsOn(hrfEngine)
+  .settings(
+    name := "selfplay",
+    libraryDependencies += "org.scala-lang.modules" %% "scala-parallel-collections" % "1.0.4"
+  )
+
 // --- New code --------------------------------------------------------------
 
 // Drives the HRF Arcs engine headless and owns the journal.
