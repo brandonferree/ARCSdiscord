@@ -158,6 +158,36 @@ final class EngineSession private (
   def replayBundle(title: String = "Arcs Render", at: Int = Int.MaxValue): ReplayBundle =
     EngineSession.buildBundle(journal, factionIds, optionIds, title, at)
 
+  /** Project one seat's PRIVATE information (its hand of action cards) into plain
+    * data for the M7 web hand-panel. Read-only: it only reads the live game, never
+    * mutates it. Returns an empty view before the game is built, or for a faction
+    * not in this game. Nothing arcs.* leaks past this boundary — the web layer
+    * sees only [[PrivateView]] / [[PrivateCard]].
+    *
+    * SECURITY: this reveals hidden info; serve it only to the authenticated holder
+    * of `seat` (Phase 3 auth), never to a spectator. */
+  def privateView(seat: Seat): PrivateView = {
+    if (game == null) PrivateView(seat, Nil)
+    else EngineSession.factionByName.get(seat.factionId).filter(game.factions.has) match {
+      case None => PrivateView(seat, Nil)
+      case Some(f) =>
+        implicit val g: arcs.Game = game
+        val hand  = f.hand
+        // FactionState.hand is HRF's `$` card region; index it like the bridge
+        // does pendingActions. Sort by suit then strength for a stable panel.
+        val cards = 0.until(hand.num).map { i =>
+          val c = hand(i)
+          val label = c match {
+            case a: ActionCard => a.name
+            case e: EventCard  => e.name
+            case other         => other.suit.name + " " + other.strength
+          }
+          (c.suit.sortKey, c.strength, PrivateCard(label, c.suit.name, c.strength, c.pips))
+        }
+        PrivateView(seat, cards.sortBy(t => (t._1, t._2)).map(_._3))
+    }
+  }
+
   // -- drive loop ------------------------------------------------------------
 
   /** Drive from the current `continue` through all automatic / oracle / single
