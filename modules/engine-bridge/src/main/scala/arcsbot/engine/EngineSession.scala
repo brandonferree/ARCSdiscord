@@ -66,11 +66,45 @@ final class EngineSession private (
   private var pendingActions: $[UserAction] = $
   private var lastOutcome: Outcome = Outcome.Rejected("uninitialized")
 
+  // Human-readable game log, captured from the engine's `Log` continuations as
+  // the drive/replay loops pass through them. Rebuilt from scratch on every
+  // replay so it always matches the current (possibly undone) journal.
+  private val logBuf = scala.collection.mutable.ArrayBuffer.empty[String]
+
+  // Journal indices of committed player decisions (lines consumed at an
+  // `Ask`/`MultiAsk`, i.e. not oracle results and not line 0's StartAction).
+  // Maintained incrementally on `apply` and recomputed on every `rebuild`. This
+  // is what `undoLast` rolls back; deriving it by parsing journal lines doesn't
+  // work because the journal stores `a.unwrap`, which drops the ExternalAction
+  // wrapper that distinguishes a choice from an oracle result.
+  private val userIdxBuf = scala.collection.mutable.ArrayBuffer.empty[Int]
+
   // -- public surface --------------------------------------------------------
 
   /** The current pending state (decision / game-over). Pure: returns the
     * outcome computed by the last create/load/apply/undo. */
   def pending(): Outcome = lastOutcome
+
+  /** The game log so far, one entry per HRF `Log` line (already flattened to
+    * plain Discord text), oldest first. Reflects the current journal — entries
+    * after an undo point are gone. */
+  def log: Seq[String] = logBuf.toVector
+
+  /** True iff there is a committed player decision that `undoLast` could roll
+    * back (i.e. at least one decision after the StartAction). */
+  def canUndo: Boolean = userIdxBuf.nonEmpty
+
+  /** Undo the most recent committed player decision: truncate the journal back
+    * to (and including) that action plus any oracle results it produced, then
+    * replay. The player who made it is back on the clock. No-op (returns the
+    * current outcome) when there is nothing to undo. HRF etiquette is to gate
+    * this behind opponent consent (re-rolls dice/reveals) — deferred; the bot
+    * currently only checks the requester holds a seat. */
+  def undoLast(): Outcome =
+    userIdxBuf.lastOption match {
+      case Some(i) => undoTo(i.toLong)
+      case None    => lastOutcome
+    }
 
   /** Apply the player's chosen option, validating it against the live decision,
     * then drive forward to the next decision. */
@@ -87,8 +121,11 @@ final class EngineSession private (
           try {
             // Perform first; only journal once the engine accepts the action, so
             // an engine error never leaves a half-written journal line.
+            val idx = journal.size
             continue = game.performContinue(|(continue), chosen, false).continue
-            appendIfHard(chosen)
+            // A hard commit becomes a new journal line and an undo point; soft
+            // steps (select/Back/Cancel) are live-only and neither.
+            if (appendIfHard(chosen)) userIdxBuf += idx.toInt
             advance()
           } catch {
             case e: Throwable =>
@@ -163,7 +200,7 @@ final class EngineSession private (
     case Force(a)                       => StepApply(a)
     case Then(a)                        => StepApply(a)
     case Milestone(_, a)                => StepApply(a)
-    case Log(_, _, cc)                  => liveStep(cc)
+    case Log(m, k, cc)                  => captureLog(m, k); liveStep(cc)
     case DelayedContinue(_, cc)         => liveStep(cc)
 
     case Roll(dice, rolled, _)          => StepApply(rolled(dice./(_.roll())))
@@ -242,7 +279,10 @@ final class EngineSession private (
   private def rebuild(): Outcome = {
     game = newGame(factionIds, optionIds)
     continue = StartContinue
+    logBuf.clear()      // the replay below re-emits every log line for this journal
+    userIdxBuf.clear()  // …and re-derives the undo points
     val lines = journal.lines.iterator
+    var lineIdx = 0     // index of the next journal line to consume
     var guard = 0
     var done = false
     while (!done) {
@@ -253,11 +293,13 @@ final class EngineSession private (
           continue = game.performContinue(|(continue), a, false).continue
         case ReplayOver =>
           done = true
-        case ReplayExternal =>
+        case ReplayExternal(decision) =>
           if (!lines.hasNext) done = true            // caught up; live continuation follows
           else {
+            if (decision) userIdxBuf += lineIdx      // a committed player choice
             val a = Serialize.parseAction(lines.next())
             continue = game.performContinue(|(continue), a, false).continue
+            lineIdx += 1
           }
       }
     }
@@ -270,31 +312,33 @@ final class EngineSession private (
     * `StartAction`, consumed at the `StartContinue`. */
   private def replayStep(c: Continue): ReplayStep = c match {
     case ErrorContinue(e, _)    => throw e
-    case StartContinue          => ReplayExternal           // consume line 0 (StartAction)
+    case StartContinue          => ReplayExternal(false)     // consume line 0 (StartAction)
     case Force(a)               => ReplayForced(a)
     case Then(a)                => ReplayForced(a)
     case Milestone(_, a)        => ReplayForced(a)
-    case Log(_, _, cc)          => replayStep(cc)
+    case Log(m, k, cc)          => captureLog(m, k); replayStep(cc)
     case DelayedContinue(_, cc) => replayStep(cc)
     case GameOver(_, _, _)      => ReplayOver
-    case _: Roll[_] | _: Roll2[_, _] | _: Roll3[_, _, _]                  => ReplayExternal
-    case _: Shuffle[_] | _: Shuffle2[_, _] | _: Shuffle3[_, _, _]         => ReplayExternal
-    case _: ShuffleUntil[_] | _: ShuffleTake[_] | _: ShuffleTakeUntil[_]  => ReplayExternal
-    case _: Random[_] | _: Random2[_, _] | _: Random3[_, _, _]            => ReplayExternal
-    case _: Ask | _: MultiAsk   => ReplayExternal
+    case _: Roll[_] | _: Roll2[_, _] | _: Roll3[_, _, _]                  => ReplayExternal(false)
+    case _: Shuffle[_] | _: Shuffle2[_, _] | _: Shuffle3[_, _, _]         => ReplayExternal(false)
+    case _: ShuffleUntil[_] | _: ShuffleTake[_] | _: ShuffleTakeUntil[_]  => ReplayExternal(false)
+    case _: Random[_] | _: Random2[_, _] | _: Random3[_, _, _]            => ReplayExternal(false)
+    case _: Ask | _: MultiAsk   => ReplayExternal(true)      // a committed player decision
     case other                  => sys.error("unhandled continuation in replay: " + other)
   }
 
   // -- helpers ---------------------------------------------------------------
 
-  private def appendIfHard(a: Action): Unit =
+  /** Journal `a` iff it's a hard ExternalAction. Returns true when a line was
+    * actually written (the caller uses this to mark undo points). */
+  private def appendIfHard(a: Action): Boolean =
     if (a.is[ExternalAction] && a.isSoft.not) {
       val line = Serialize.write(a.unwrap)
       journal.append(journal.size, line) match {
-        case Right(_)        => ()
+        case Right(_)        => true
         case Left(conflict)  => sys.error(s"journal append conflict: $conflict")
       }
-    }
+    } else false
 
   private def toTurn(f: Faction, actions: $[UserAction]): Turn = {
     implicit val g: arcs.Game = game
@@ -312,6 +356,15 @@ final class EngineSession private (
     * back to the action's structural string. */
   private def safeText(e: => hrf.elem.Elem, fallback: => String): String =
     try ElemText.render(e) catch { case _: Throwable => fallback }
+
+  /** Record a `Log` continuation's message in the game log. Only `Normal` lines
+    * are kept; `Temp` ones are transient UI hints. Empty/whitespace renders are
+    * dropped so the log stays readable. */
+  private def captureLog(message: hrf.elem.Elem, kind: LogKind): Unit =
+    if (kind == LogKind.Normal) {
+      val t = ElemText.render(message)
+      if (t.nonEmpty) logBuf += t
+    }
 
   private def kindOf(a: UserAction): MoveOption.Kind =
     if (a.is[Back]) MoveOption.Back
@@ -430,6 +483,8 @@ object EngineSession {
 
   private sealed trait ReplayStep
   private final case class ReplayForced(a: arcs.Action) extends ReplayStep
-  private case object ReplayExternal extends ReplayStep
+  /** Consume the next journal line. `decision` = it's a committed player choice
+    * (an `Ask`/`MultiAsk`), so its index is an undo point. */
+  private final case class ReplayExternal(decision: Boolean) extends ReplayStep
   private case object ReplayOver extends ReplayStep
 }

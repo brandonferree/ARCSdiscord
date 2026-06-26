@@ -104,6 +104,20 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
           event.getHook.sendMessage("Done.").setEphemeral(true).queue()
         }
 
+      case "undo" =>
+        withStarted(event, channelId) { t =>
+          event.deferReply(true).queue()
+          execute(event, t.gameId, driver.undo(t.gameId, userId))
+          event.getHook.sendMessage("Undo processed.").setEphemeral(true).queue()
+        }
+
+      case "log" =>
+        withStarted(event, channelId) { t =>
+          val lines = store.sessionOf(t.gameId).log
+          if (lines.isEmpty) replyEphemeral(event, "No log entries yet.")
+          else replyEphemeral(event, recentLog(lines))
+        }
+
       case other => replyEphemeral(event, s"Unknown subcommand: $other")
     }
   }
@@ -158,6 +172,9 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
           ch.sendMessage(s"🏁 **Game over!** Winner(s): $w").queue()
         }
 
+      case BotEffect.Notice(_, message) =>
+        channelOf(event, gameId).foreach(_.sendMessage(message).queue())
+
       case BotEffect.Ephemeral(_, message) =>
         if (event.isAcknowledged) event.getHook.sendMessage(message).setEphemeral(true).queue()
         else event.reply(message).setEphemeral(true).queue()
@@ -199,6 +216,20 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
       options.filter(_.kind != MoveOption.Info)
         .map(o => s"`${o.index}` — ${o.text}").mkString("\n")
 
+  /** Format the tail of the game log for an ephemeral reply, numbered by their
+    * true position and kept under Discord's 2000-char message limit. */
+  private def recentLog(lines: Seq[String]): String = {
+    val MaxLen = 1900
+    val shown  = lines.takeRight(40)
+    val skipped = lines.length - shown.length
+    val numbered = shown.zipWithIndex.map { case (l, i) => s"`${skipped + i + 1}.` $l" }
+    val header = "**Game log**" + (if (skipped > 0) s" (last ${shown.length} of ${lines.length})" else "")
+    // Drop from the top until it fits, so the most recent entries always survive.
+    var body = numbered
+    while (body.nonEmpty && (header + "\n" + body.mkString("\n")).length > MaxLen) body = body.tail
+    header + "\n" + body.mkString("\n")
+  }
+
   private def properCase(s: String) = store.validFactions.find(_.equalsIgnoreCase(s)).getOrElse(s)
 
   // -- helpers ---------------------------------------------------------------
@@ -234,6 +265,8 @@ object GameCommands {
         new SubcommandData("board", "Re-post the current board"),
         new SubcommandData("moves", "Privately show your current legal options"),
         new SubcommandData("do", "Choose option number n")
-          .addOptions(new OptionData(OptionType.INTEGER, "n", "Option index", true))
+          .addOptions(new OptionData(OptionType.INTEGER, "n", "Option index", true)),
+        new SubcommandData("undo", "Roll back your most recent committed move"),
+        new SubcommandData("log", "Privately show the recent game log")
       )
 }

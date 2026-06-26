@@ -27,8 +27,13 @@ Small, action-focused. For full detail read [STATUS.md](STATUS.md); roadmap in
 - **Run live (needs a token):** `DISCORD_TOKEN=… [DISCORD_GUILD=…] [ARCS_DB=…]
   RENDER_BROWSER_CHANNEL=chrome sbt "bot/run"`. `DISCORD_GUILD` = instant guild
   commands; `RENDER_STUB=1` skips the browser. The live path is NOT yet tested.
+- **`/arcs undo` + `/arcs log` done** (headless: `BotUndoDryRun`): `undo` rolls
+  back the requester's last committed decision (`EngineSession.undoLast` →
+  `undoTo` truncate+replay; undo points derived from `Ask`/`MultiAsk` lines in
+  replay + tracked on `apply`); `log` shows the captured HRF `Log` lines
+  (`EngineSession.log`). Seat-enforced; opponent-consent etiquette still deferred.
 - **Deferred follow-ups:** dedicated channel/role auto-creation, private hand/
-  objective via DM, `/arcs undo|log`, intermission-report posts.
+  objective via DM, intermission-report posts.
 
 ## M5 — full campaign (engine/bridge done 2026-06-25)
 - Bridge plays full Act I→III. Run `sbt "engineBridge/runMain arcsbot.engine.Repl

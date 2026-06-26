@@ -119,6 +119,24 @@ final class TurnDriver(
     }
   }
 
+  /** Roll back the requesting player's most recent committed move and re-present
+    * the resulting decision. Seat-enforced (any seated player may undo for now;
+    * opponent-consent etiquette is a later refinement). */
+  def undo(gameId: String, userId: String): Vector[BotEffect] = {
+    val session = sessions(gameId)
+    seats.seatForUser(gameId, userId) match {
+      case None => Vector(BotEffect.Ephemeral(userId, "You don't hold a seat in this game."))
+      case Some(_) =>
+        if (!session.canUndo) Vector(BotEffect.Ephemeral(userId, "There's nothing to undo yet."))
+        else session.undoLast() match {
+          case Outcome.Next(turn) =>
+            BotEffect.Notice(gameId, s"⮌ <@$userId> undid the last move.") +: present(gameId, session, turn)
+          case Outcome.GameOver(winners) => Vector(BotEffect.AnnounceWinners(gameId, winners))
+          case Outcome.Rejected(reason)  => Vector(BotEffect.Ephemeral(userId, s"Undo failed: $reason"))
+        }
+    }
+  }
+
   private def present(gameId: String, session: EngineSession, turn: Turn): Vector[BotEffect] = {
     val publicBoard = renderer.render(session, viewer = None)
     val activeUser  = seats.userForSeat(gameId, turn.seat)
@@ -141,6 +159,8 @@ object BotEffect {
   final case class PresentMoves(gameId: String, seat: Seat, userId: Option[String], prompt: String, options: Seq[MoveOption]) extends BotEffect
   final case class PingActive(gameId: String, seat: Seat, userId: Option[String]) extends BotEffect
   final case class AnnounceWinners(gameId: String, winners: Seq[Seat]) extends BotEffect
+  /** A plain public message posted to the table channel (e.g. an undo notice). */
+  final case class Notice(gameId: String, message: String) extends BotEffect
   final case class Ephemeral(userId: String, message: String) extends BotEffect
   final case class Error(gameId: String, message: String) extends BotEffect
 }
