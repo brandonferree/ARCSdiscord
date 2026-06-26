@@ -46,7 +46,10 @@ object Bot {
     // One RenderServer backs both the headless screenshotter (served at `/`) and
     // the M7 web viewer (served at `/game/<id>` to real browsers). Share it so a
     // visitor's full-res, zoomable board comes from the same bundle the bot draws.
-    val server = RenderServer.fromRepo()
+    // RENDER_PORT pins the listen port (default 0 = ephemeral) so a Cloudflare
+    // Tunnel can point at a stable port across restarts; loopback-only either way.
+    val webPort = sys.env.get("RENDER_PORT").flatMap(p => scala.util.Try(p.trim.toInt).toOption).getOrElse(0)
+    val server = RenderServer.fromRepo(port = webPort)
     val renderer: BoardRenderer =
       if (sys.env.get("RENDER_STUB").contains("1")) { server.start(); BoardRenderer.Stub }
       else new PathBRenderer(server) // its ctor start()s the server
