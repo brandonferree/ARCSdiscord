@@ -42,7 +42,11 @@ final class GameStore(
   }
 
   val validFactions: Seq[String] = Seq("Red", "Yellow", "Blue", "White")
-  val minPlayers = 3
+  // ARCS_DEV=1 is a solo-testing affordance: it lets a single Discord account hold
+  // every seat and lowers the start threshold to one, so one tester can drive a
+  // whole game (all move-control DMs land in that tester's DMs). Off in production.
+  val devMode    = sys.env.get("ARCS_DEV").contains("1")
+  val minPlayers = if (devMode) 1 else 3
   val maxPlayers = 4
 
   private val byGame    = mutable.Map.empty[String, Table]
@@ -96,7 +100,7 @@ final class GameStore(
         validFactions.find(_.equalsIgnoreCase(factionId)) match {
           case None                                    => Left(s"Unknown faction '$factionId' (pick ${validFactions.mkString("/")}).")
           case Some(f) if t.seats.contains(f)          => Left(s"$f is already taken by <@${t.seats(f)}>.")
-          case Some(_) if t.seats.values.toSet(userId) => Left("You already hold a seat in this game.")
+          case Some(_) if !devMode && t.seats.values.toSet(userId) => Left("You already hold a seat in this game.")
           case Some(_) if t.seats.size >= maxPlayers   => Left(s"This game is full ($maxPlayers players).")
           case Some(f)                                 => t.seats(f) = userId; persist(t); Right(t)
         }
@@ -133,7 +137,22 @@ final class GameStore(
   val seats: SeatRegistry = new SeatRegistry {
     def userForSeat(gameId: String, seat: Seat) = table(gameId).flatMap(_.seats.get(seat.factionId))
     def seatForUser(gameId: String, userId: String) =
-      table(gameId).flatMap(_.seats.collectFirst { case (f, u) if u == userId => Seat(f) })
+      table(gameId).flatMap { t =>
+        val held = t.seats.collect { case (f, u) if u == userId => Seat(f) }.toSeq
+        held match {
+          case Seq()    => None
+          case Seq(one) => Some(one)
+          // Solo dev mode: one account holds several seats, so resolve to whichever
+          // seat is actually on the clock (else clicks would always act as the first
+          // faction and the engine would reject them). Falls back to the first seat.
+          case many =>
+            val active = t.session.flatMap(_.pending() match {
+              case Outcome.Next(turn) => Some(turn.seat)
+              case _                  => None
+            })
+            active.filter(many.contains).orElse(many.headOption)
+        }
+      }
   }
 
   def sessionOf(gameId: String): EngineSession =

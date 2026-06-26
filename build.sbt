@@ -278,5 +278,13 @@ lazy val bot = (project in file("modules/bot"))
       // native libs we don't want on the classpath.
       ("net.dv8tion" % "JDA" % "5.0.0").exclude("club.minnced", "opus-java"),
       "org.slf4j"    % "slf4j-simple" % "2.0.9"
-    )
+    ),
+    // The bot is a long-running server: fork so JDA's non-daemon threads keep the
+    // JVM alive (an in-process `run` exits as soon as main returns). Pin the forked
+    // working dir to the build root so RenderServer.fromRepo() resolves hrf-web/
+    // and assets/ — mirrors the renderer module. mainClass disambiguates the
+    // several *DryRun mains so `bot/run` is non-interactive.
+    Compile / run / fork := true,
+    Compile / run / baseDirectory := (ThisBuild / baseDirectory).value,
+    Compile / mainClass := Some("arcsbot.discord.Bot")
   )

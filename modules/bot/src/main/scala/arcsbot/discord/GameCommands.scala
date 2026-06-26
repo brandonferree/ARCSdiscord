@@ -254,18 +254,23 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
     else {
       val menu = StringSelectMenu.create(s"sel|$gameId")
         .setPlaceholder("Choose your move")
-      pickable.take(MaxSelect).foreach(o => menu.addOption(label(o.text), o.index.toString))
+      pickable.take(MaxSelect).foreach(o => menu.addOption(label(numberedLabel(o)), o.index.toString))
       Seq(ActionRow.of(menu.build()))
     }
   }
 
   private def button(gameId: String, o: MoveOption): Button = {
-    val b = Button.primary(moveId(gameId, o.index), label(o.text))
+    val b = Button.primary(moveId(gameId, o.index), label(numberedLabel(o)))
     o.kind match {
       case MoveOption.Back | MoveOption.Cancel => b.withStyle(net.dv8tion.jda.api.interactions.components.buttons.ButtonStyle.SECONDARY)
       case _                                   => b
     }
   }
+
+  /** Prefix the option's index so otherwise-identical labels stay distinguishable
+    * (Arcs build options can flatten to the same text when their location token is
+    * dropped) and match the numbers shown by `/arcs moves` / used by `/arcs do n`. */
+  private def numberedLabel(o: MoveOption): String = s"${o.index}. ${o.text}"
 
   private def label(s: String): String = {
     val t = if (s == null || s.isEmpty) "(option)" else s

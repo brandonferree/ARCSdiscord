@@ -349,12 +349,22 @@ final class EngineSession private (
 
   private def toTurn(f: Faction, actions: $[UserAction]): Turn = {
     implicit val g: arcs.Game = game
-    val prompt  = actions.headOption.map(a => safeText(a.question, "")).getOrElse("")
+    // Each option carries its own `.question`. Usually they're all the same — that
+    // shared text is the prompt and the labels are just the `.option`. But some Asks
+    // (e.g. building placement) put the distinguishing context — the board slot /
+    // location — in a *per-option* question ("Place in Arrow 5▲ Fuel") while every
+    // `.option` is identical ("White City and ships"). When the questions differ we
+    // fold each into its own label so the options aren't indistinguishable.
+    val questions = 0.until(actions.num).map(i => safeText(actions(i).question, ""))
+    val shared    = if (questions.distinct.sizeIs == 1) questions.headOption.getOrElse("") else ""
     val options = 0.until(actions.num).map { i =>
-      val a = actions(i)
-      MoveOption(i, safeText(a.option, a.toString), kindOf(a))
+      val a  = actions(i)
+      val ot = safeText(a.option, a.toString)
+      val qt = questions(i)
+      val text = if (qt.nonEmpty && qt != shared) s"$ot — $qt" else ot
+      MoveOption(i, text, kindOf(a))
     }
-    Turn(toSeat(f), prompt, options)
+    Turn(toSeat(f), shared, options)
   }
 
   /** Render an Elem to text, falling back when it throws. `Hidden` actions

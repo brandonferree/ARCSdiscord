@@ -20,6 +20,10 @@ hrfn-arcs-assets-*.zip
 *.token
 application.conf.local
 
+# Bot runtime artifacts (SQLite game store + launch log)
+*.db
+bot.log
+
 # OS / editor
 .DS_Store
 .idea/
