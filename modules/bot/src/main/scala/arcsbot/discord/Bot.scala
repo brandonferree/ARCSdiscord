@@ -43,9 +43,18 @@ object Bot {
         println("In-memory games (set ARCS_DB=<path> to persist across restarts).")
         new GameStore()
     }
+    // One RenderServer backs both the headless screenshotter (served at `/`) and
+    // the M7 web viewer (served at `/game/<id>` to real browsers). Share it so a
+    // visitor's full-res, zoomable board comes from the same bundle the bot draws.
+    val server = RenderServer.fromRepo()
     val renderer: BoardRenderer =
-      if (sys.env.get("RENDER_STUB").contains("1")) BoardRenderer.Stub
-      else new PathBRenderer(RenderServer.fromRepo())
+      if (sys.env.get("RENDER_STUB").contains("1")) { server.start(); BoardRenderer.Stub }
+      else new PathBRenderer(server) // its ctor start()s the server
+    // `/game/<id>` -> that game's live board replayed to latest. Unknown or
+    // not-yet-started games fall through to a 404. The visitor's own browser does
+    // the replay, so this is just the lobby/replay projection — no arcs.* leaks.
+    server.games(id => store.table(id).flatMap(t => t.session.map(_.replayBundle(title = t.name))))
+    println(s"Web board viewer on ${server.baseUrl}/game/<id> (Phase 1: local; expose via tunnel for Phase 2).")
     val driver = new TurnDriver(store.sessionOf, renderer, store.tables, store.seats)
 
     val jda = net.dv8tion.jda.api.JDABuilder
