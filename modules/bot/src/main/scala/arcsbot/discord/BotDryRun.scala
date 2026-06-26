@@ -48,10 +48,12 @@ object BotDryRun {
     var turns  = 0
     var winner = Option.empty[Seq[Seat]]
     var checkedGuards = false
+    val acts   = scala.collection.mutable.SortedSet.empty[Int] // acts announced via Intermission
     val cap = 50000
     var done = false
 
     while (!done) {
+      effects.collect { case BotEffect.Intermission(_, act, _) => act }.foreach(acts += _)
       currentMoves(effects) match {
         case Some(pm) =>
           // One-time guardrail checks against the live turn:
@@ -88,8 +90,13 @@ object BotDryRun {
       }
     }
 
+    // A full Blighted Reach campaign crosses into Act II then Act III, so the bot
+    // must have announced both as intermissions (Act I is the game's start, not an
+    // intermission). Guards against the transition detector silently regressing.
+    assert(acts == Set(2, 3), s"expected Act II+III intermissions, saw acts ${acts.mkString("{", ",", "}")}")
+
     val w = winner.get
-    println(s"BotDryRun: GAME OVER after $turns decisions; winner(s): " +
+    println(s"BotDryRun: GAME OVER after $turns decisions; intermissions: Act ${acts.mkString("+Act ")}; winner(s): " +
       (if (w.isEmpty) "Humanity" else w.map(_.factionId).mkString(", ")))
     println("BOTDRYRUN PASSED")
   }

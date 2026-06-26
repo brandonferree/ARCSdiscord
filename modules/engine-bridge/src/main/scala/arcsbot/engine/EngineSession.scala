@@ -94,6 +94,13 @@ final class EngineSession private (
     * back (i.e. at least one decision after the StartAction). */
   def canUndo: Boolean = userIdxBuf.nonEmpty
 
+  /** The live campaign position: `(act, chapter)`, read straight from engine
+    * state. `(0, 0)` before the game is built; act is 1..3 once a Blighted Reach
+    * campaign is under way. The bot diffs this across decisions to detect act
+    * transitions (intermissions) — structural, so it never depends on parsing
+    * the "Act II"/"INTERMISSION" log strings. */
+  def actChapter: (Int, Int) = if (game == null) (0, 0) else (game.act, game.chapter)
+
   /** Undo the most recent committed player decision: truncate the journal back
     * to (and including) that action plus any oracle results it produced, then
     * replay. The player who made it is back on the clock. No-op (returns the

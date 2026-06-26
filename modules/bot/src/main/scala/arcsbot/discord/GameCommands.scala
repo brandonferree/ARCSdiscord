@@ -184,6 +184,14 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
           ch.sendMessage(s"$ping🏁 **Game over!** Winner(s): $w").queue()
         }
 
+      case BotEffect.Intermission(_, act, chapter) =>
+        channelOf(event, gameId).foreach { ch =>
+          val numeral = "I" * act.max(0)
+          ch.sendMessage(
+            s"${roleMention(gameId)}🎭 **Intermission — Act $numeral begins** (Chapter $chapter). " +
+            "See the standings on the board below.").queue()
+        }
+
       case BotEffect.Notice(_, message) =>
         channelOf(event, gameId).foreach(_.sendMessage(message).queue())
 

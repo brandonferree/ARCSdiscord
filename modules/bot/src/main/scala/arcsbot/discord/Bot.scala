@@ -137,17 +137,39 @@ final class TurnDriver(
     }
   }
 
+  // Last-seen (act, chapter) per game, for detecting act transitions. Updated on
+  // every presented decision; survives within a process (rebuilt silently after a
+  // restart on the first decision seen, so reload never re-announces old acts).
+  private val progress = scala.collection.mutable.Map.empty[String, (Int, Int)]
+
   private def present(gameId: String, session: EngineSession, turn: Turn): Vector[BotEffect] = {
     val publicBoard = renderer.render(session, viewer = None)
     val activeUser  = seats.userForSeat(gameId, turn.seat)
     // Only present options a player can actually choose; Back/Cancel come through
     // as their own buttons (TurnDriver leaves filtering of Info to the bridge).
-    Vector(
+    intermission(gameId, session) ++ Vector(
       BotEffect.PostBoard(gameId, publicBoard),
       // The move controls carry the @-ping for the active player, so a single
       // message both notifies and presents (no separate PingActive needed here).
       BotEffect.PresentMoves(gameId, turn.seat, activeUser, turn.prompt, turn.options)
     )
+  }
+
+  /** Emit a one-shot `Intermission` effect when the campaign has crossed into a
+    * new act since this game's last decision. No effect on first sighting (game
+    * just started, or bot just reloaded) or when the act goes backwards (undo);
+    * those only resync the tracker. The board+moves follow, so the act banner
+    * lands just before a fresh board for the new act. */
+  private def intermission(gameId: String, session: EngineSession): Vector[BotEffect] = {
+    val (act, chapter) = session.actChapter
+    val prev = progress.get(gameId)
+    progress(gameId) = (act, chapter)
+    prev match {
+      // Acts II and III are the campaign intermissions; entering Act I (0 -> 1) is
+      // the game's opening setup, announced by `/arcs start`, not an intermission.
+      case Some((prevAct, _)) if act > prevAct && act >= 2 => Vector(BotEffect.Intermission(gameId, act, chapter))
+      case _                                               => Vector.empty
+    }
   }
 }
 
@@ -157,6 +179,9 @@ sealed trait BotEffect
 object BotEffect {
   final case class PostBoard(gameId: String, render: arcsbot.render.Render) extends BotEffect
   final case class PresentMoves(gameId: String, seat: Seat, userId: Option[String], prompt: String, options: Seq[MoveOption]) extends BotEffect
+  /** A campaign act boundary just began (`act` is the new act, 2 or 3). The JDA
+    * layer posts a role-pinged banner ahead of the new act's board. */
+  final case class Intermission(gameId: String, act: Int, chapter: Int) extends BotEffect
   final case class PingActive(gameId: String, seat: Seat, userId: Option[String]) extends BotEffect
   final case class AnnounceWinners(gameId: String, winners: Seq[Seat]) extends BotEffect
   /** A plain public message posted to the table channel (e.g. an undo notice). */
