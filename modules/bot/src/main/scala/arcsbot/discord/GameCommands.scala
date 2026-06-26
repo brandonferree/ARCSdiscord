@@ -13,7 +13,8 @@ import net.dv8tion.jda.api.interactions.components.selections.StringSelectMenu
 import net.dv8tion.jda.api.interactions.components.ActionRow
 import net.dv8tion.jda.api.interactions.commands.build.SlashCommandData
 import net.dv8tion.jda.api.utils.FileUpload
-import net.dv8tion.jda.api.entities.channel.concrete.TextChannel
+import net.dv8tion.jda.api.entities.channel.concrete.{TextChannel, PrivateChannel}
+import net.dv8tion.jda.api.entities.Message
 
 import scala.jdk.CollectionConverters._
 
@@ -26,9 +27,11 @@ import scala.jdk.CollectionConverters._
  * channels, users, buttons, and `BotEffect`s.
  *
  * Slice scope: a game lives in the channel where `/arcs new` was run (no
- * dedicated channel/role auto-creation yet — pings target users directly). Move
- * controls are posted publicly in the table channel and seat-enforced on click;
- * private-info DMs are a later refinement (docs/DISCORD-UX.md).
+ * dedicated channel/role auto-creation yet — pings target users directly). The
+ * board and a turn ping are posted publicly in the table channel; the active
+ * player's move controls (whose option text reveals their hand / legal plays)
+ * are DMed to them so hidden info isn't leaked, with a public fallback if the
+ * player's DMs are closed (docs/DISCORD-UX.md).
  * ===========================================================================*/
 final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerAdapter {
 
@@ -153,12 +156,19 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
         channelOf(event, gameId).foreach(_.sendFiles(FileUpload.fromData(render.png, render.filename)).queue())
 
       case BotEffect.PresentMoves(_, seat, userId, prompt, options) =>
-        channelOf(event, gameId).foreach { ch =>
-          val who    = userId.map(u => s"<@$u>").getOrElse(s"**${seat.factionId}**")
-          val header = s"$who — your move" + (if (prompt.nonEmpty) s": $prompt" else "")
-          val rows   = controls(gameId, options)
-          if (rows.isEmpty) ch.sendMessage(s"$header\n(no actionable options)").queue()
-          else ch.sendMessage(header).setComponents(rows.asJava).queue()
+        val rows   = controls(gameId, options)
+        val header = moveHeader(seat, userId, prompt)
+        userId match {
+          // Seated human: ping publicly (no options shown) and DM the controls so
+          // the player's hand / legal plays stay private; fall back to a public
+          // post if the DM can't be delivered.
+          case Some(uid) =>
+            channelOf(event, gameId).foreach(_.sendMessage(
+              s"<@$uid>, you're up (**${seat.factionId}**) — your move options are in your DMs.").queue())
+            sendMovesDM(event, gameId, uid, header, rows)
+          // No seated user (AI / headless drive): nothing private to protect.
+          case None =>
+            postMoves(event, gameId, header, rows)
         }
 
       case BotEffect.PingActive(_, seat, userId) =>
@@ -182,6 +192,47 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
       case BotEffect.Error(_, message) =>
         channelOf(event, gameId).foreach(_.sendMessage(s"⚠️ $message").queue())
     }
+
+  // -- move presentation -----------------------------------------------------
+
+  /** Header line for a move prompt: who is acting + the flattened question. */
+  private def moveHeader(seat: Seat, userId: Option[String], prompt: String): String = {
+    val who = userId.map(u => s"<@$u>").getOrElse(s"**${seat.factionId}**")
+    s"$who — your move" + (if (prompt.nonEmpty) s": $prompt" else "")
+  }
+
+  /** Post move controls to the public table channel (AI seats, or DM fallback). */
+  private def postMoves(event: IReplyCallback, gameId: String, header: String, rows: Seq[ActionRow]): Unit =
+    channelOf(event, gameId).foreach { ch =>
+      if (rows.isEmpty) ch.sendMessage(s"$header\n(no actionable options)").queue()
+      else ch.sendMessage(header).setComponents(rows.asJava).queue()
+    }
+
+  /** DM the active player their move controls, keeping the option text (which
+    * leaks their hand / legal plays) off the public channel. If the DM can't be
+    * delivered (player disabled DMs, or shares no guild with the bot), note it
+    * publicly and fall back to posting the controls in the table channel so the
+    * game never stalls. Button/select interactions route back to this listener
+    * regardless of whether they were clicked in a DM or the channel. */
+  private def sendMovesDM(event: IReplyCallback, gameId: String, userId: String,
+                          header: String, rows: Seq[ActionRow]): Unit = {
+    def fallback(reason: String): Unit = {
+      Console.err.println(s"[dm] could not DM $userId for game $gameId: $reason — posting publicly.")
+      channelOf(event, gameId).foreach(_.sendMessage(
+        s"⚠️ <@$userId>, I couldn't DM you, so your options are below. Enable " +
+        "*Direct Messages* from server members to keep your hand private.").queue())
+      postMoves(event, gameId, header, rows)
+    }
+    event.getJDA.openPrivateChannelById(userId).queue(
+      (ch: PrivateChannel) => {
+        val msg =
+          if (rows.isEmpty) ch.sendMessage(s"$header\n(no actionable options)")
+          else ch.sendMessage(header).setComponents(rows.asJava)
+        msg.queue((_: Message) => (), (err: Throwable) => fallback(String.valueOf(err.getMessage)))
+      },
+      (err: Throwable) => fallback(String.valueOf(err.getMessage))
+    )
+  }
 
   /** Build move controls: ≤5 → buttons; ≤25 → a select menu; more → first 25 in a
     * select menu (use `/arcs moves` for the full list). */
