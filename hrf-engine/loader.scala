@@ -216,7 +216,16 @@ class CachedBlobImageLoader(id : String) extends Loader[ImageWrapper] {
                                     process(url, tries + 1)
                                 }
                                 null
-                            }
+                            }.`catch`(js.defined(({ (_ : Any) =>
+                                // cache.add rejects on a fetch failure (e.g. a 404 from a
+                                // missing asset). Without this the url stays Loading forever
+                                // and any loader.wait() on it never fires (a single missing
+                                // image blanks the whole board). Mark it failed so wait()
+                                // proceeds; the framework treats Error as not-Loading and
+                                // renders without that image.
+                                fail(url)
+                                null
+                            }) : js.Function1[Any, js.|[js.Any, js.Thenable[js.Any]]]))
                         }
                         else {
                             // println("wait")
@@ -272,7 +281,16 @@ class CachedImageLoader(id : String) extends Loader[html.Image] {
                                     process(url, tries + 1)
                                 }
                                 null
-                            }
+                            }.`catch`(js.defined(({ (_ : Any) =>
+                                // cache.add rejects on a fetch failure (e.g. a 404 from a
+                                // missing asset). Without this the url stays Loading forever
+                                // and any loader.wait() on it never fires (a single missing
+                                // image blanks the whole board). Mark it failed so wait()
+                                // proceeds; the framework treats Error as not-Loading and
+                                // renders without that image.
+                                fail(url)
+                                null
+                            }) : js.Function1[Any, js.|[js.Any, js.Thenable[js.Any]]]))
                         }
                         else {
                             // println("wait")
@@ -330,7 +348,16 @@ class CachedStringLoader(id : String) extends Loader[String] {
                                     process(url, tries + 1)
                                 }
                                 null
-                            }
+                            }.`catch`(js.defined(({ (_ : Any) =>
+                                // cache.add rejects on a fetch failure (e.g. a 404 from a
+                                // missing asset). Without this the url stays Loading forever
+                                // and any loader.wait() on it never fires (a single missing
+                                // image blanks the whole board). Mark it failed so wait()
+                                // proceeds; the framework treats Error as not-Loading and
+                                // renders without that image.
+                                fail(url)
+                                null
+                            }) : js.Function1[Any, js.|[js.Any, js.Thenable[js.Any]]]))
                         }
                         else {
                             // println("wait")
