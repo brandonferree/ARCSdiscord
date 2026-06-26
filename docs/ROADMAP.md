@@ -31,8 +31,8 @@ polish.
       state, surface `Turn`, apply a chosen option, append, advance.
 - [x] `Elem → text` flattener (`ElemText`).
 - **Demo:** `sbt "engineBridge/runMain arcsbot.engine.Repl [selftest|sqltest|play]"`.
-  *(Commit 694dc2e.)* Caveat: multi-act Fates / hidden-info selection is deferred
-  to M5 — the bridge surfaces those as `Rejected` for now.
+  *(Commit 694dc2e.)* (The multi-act Fates / hidden-info caveat noted here is
+  resolved in M5 below — the bridge now plays full campaigns.)
 
 ## M3 — First board render ✅ *(done 2026-06-25)*
 **Goal:** an image of the live board.
@@ -60,11 +60,23 @@ polish.
 - **Demo:** 3–4 humans play the opening of an Arcs game asynchronously in a
   Discord server.
 
-## M5 — Full Blighted Reach campaign
-- [ ] Campaign options surfaced (`Act1Only`, fate mode, setup cards;
-      `arcs/meta.scala:319`+).
-- [ ] Multi-act flow, Fate cards (28 `fate-*.scala`), leaders & lore, blight.
-- [ ] Round/act transition summaries; campaign scoring.
+## M5 — Full Blighted Reach campaign 🟦 *(engine/bridge done 2026-06-25; UI polish in M4)*
+- [x] **Multi-act flow + Fates working through the bridge.** Root cause of the
+      old `Rejected` was `EngineSession.decideAsk` exposing HRF's un-pickable
+      `HiddenChoice` "explode" marker for interactive selects (`YY/XXSelectObjects`,
+      used by Fates/hidden-info). Now mirrors HRF's UI/bot: explode to concrete
+      leaves, filter `Hidden`/`Info`/`Unavailable`.
+- [x] **Acts II/III unlocked.** They are fully implemented upstream but gated by
+      `MetaBR.development` (= `hrf.HRF.version.startsWith("test")`); the public
+      build forces `Act1Only`. We set the vendored `BuildInfo.version` to
+      `test-0.8.140` (build.sbt) to enable the full campaign. New default config is
+      `NoFate` (the dev campaign mode); `Act1Only` is *not* in dev-mode's option
+      list, so using it desyncs the renderer lobby (was the render `MatchError`).
+- [x] **Verified:** random full Act I→III campaigns (8 seeds, ~800–965 decisions)
+      play to a real game-over and replay to the identical winner
+      (`Repl m5probe`); the renderer paints a full board; M2 self-tests pass.
+- [ ] Campaign options surfaced in the Discord UI (M4): fate mode, setup cards.
+- [ ] Round/act transition summaries (`IntermissionReport`) posted to Discord (M4).
 - [ ] Undo etiquette (`UndoAction`, opponent-consent gating).
 
 ## M6 — Native renderer + polish

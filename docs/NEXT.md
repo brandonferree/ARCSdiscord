@@ -4,16 +4,15 @@ Small, action-focused. For full detail read [STATUS.md](STATUS.md); roadmap in
 [ROADMAP.md](ROADMAP.md).
 
 ## Where we are
-- **M1, M2, M3 done.** Path B renders a faithful Blighted Reach board headless
-  (`board.png` ~5.8 MB). All three M3 blockers (Windows Chromium launch, asset-404
-  loader hang, browser `Then`/`Milestone` replay-fidelity bug) are fixed.
-- Work is on branch **`m3-board-render`** (pushed, 3 commits on top of `main`).
+- **M1, M2, M3 done; M5 engine/bridge done.** Path B renders a faithful Blighted
+  Reach board headless. The bridge now plays full Act I→III campaigns (Fates and
+  all) and replays them to the identical winner.
+- Work is on branch **`m3-board-render`** (PR #17 open).
 
 ## Do first
-1. **Open the PR** (not yet opened — no `gh`/token on this machine):
-   https://github.com/brandonferree/ARCSdiscord/pull/new/m3-board-render
-   Body is drafted in the session transcript. Or install `gh` / set `GH_TOKEN`
-   and run `gh pr create`. Merge once reviewed.
+1. PR [#17](https://github.com/brandonferree/ARCSdiscord/pull/17) is open
+   (labels: renderer, enhancement). `gh` is installed + authenticated on this
+   machine now. Merge once reviewed.
 
 ## Then: M4 — Discord vertical slice (next milestone)
 Goal: play a real (small) Arcs decision through Discord end-to-end.
@@ -27,6 +26,16 @@ Goal: play a real (small) Arcs decision through Discord end-to-end.
   (launching Chromium per render is the expensive part; it's not thread-safe —
   serialise calls).
 
+## M5 — full campaign (engine/bridge done 2026-06-25)
+- Bridge plays full Act I→III. Run `sbt "engineBridge/runMain arcsbot.engine.Repl
+  m5probe [seed]"` (no seed → seeds 1–8): random campaigns to game-over + replay
+  check. See STATUS key fact #3 for the two fixes (interactive-select handling +
+  `BuildInfo.version` = `test-0.8.140` to enable dev mode / Acts II–III).
+- Default game config is now `NoFate` full campaign (`DefaultOptionIds`). Do **not**
+  use `Act1Only` for rendered games — it's absent from dev-mode's option list and
+  desyncs the browser (render `MatchError`).
+- Remaining M5 is UI-side (M4): surface fate mode / intermission reports in Discord.
+
 ## Loose ends (small, optional)
 - **`f03/f03-25.webp` 404** (cosmetic; degrades gracefully). The mirror has
   `f03-25a/b` but not plain `f03-25`. HRF's asset list (`arcs/meta.scala:1025`) has
@@ -34,9 +43,6 @@ Goal: play a real (small) Arcs decision through Discord end-to-end.
   stale upstream entry. Confirm before chasing.
 - **Per-faction tableau cropping** (`PathBRenderer.renderTableau`) and viewer-gated
   private renders are first cut → later refinements.
-- **M5 gap still open:** multi-act Fates / hidden-info selection — the bridge
-  surfaces these as `Rejected` (see STATUS key fact #3). A non-`HostTest` game hits
-  this at the first intermission.
 
 ## Handy commands
 ```bash
