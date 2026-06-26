@@ -274,6 +274,9 @@ lazy val bot = (project in file("modules/bot"))
   .settings(
     name := "bot",
     libraryDependencies ++= Seq(
-      // M4: "net.dv8tion" % "JDA" % "5.x.x"
+      // Audio is excluded — the bot never touches voice, and opus-java drags in
+      // native libs we don't want on the classpath.
+      ("net.dv8tion" % "JDA" % "5.0.0").exclude("club.minnced", "opus-java"),
+      "org.slf4j"    % "slf4j-simple" % "2.0.9"
     )
   )

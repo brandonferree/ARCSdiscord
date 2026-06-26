@@ -4,27 +4,28 @@ Small, action-focused. For full detail read [STATUS.md](STATUS.md); roadmap in
 [ROADMAP.md](ROADMAP.md).
 
 ## Where we are
-- **M1, M2, M3 done; M5 engine/bridge done.** Path B renders a faithful Blighted
-  Reach board headless. The bridge now plays full Act I→III campaigns (Fates and
-  all) and replays them to the identical winner.
-- Work is on branch **`m3-board-render`** (PR #17 open).
+- **M1, M2, M3 done; M5 engine/bridge done; M4 turn loop done.** Path B renders a
+  faithful board headless; the bridge plays full Act I→III campaigns (Fates) and
+  replays to the identical winner; the Discord bot's turn loop plays a full game
+  end-to-end headlessly.
+- PRs open: #17 (M3), #18 (M5, based on m3-board-render). M4 work is the latest.
 
 ## Do first
-1. PR [#17](https://github.com/brandonferree/ARCSdiscord/pull/17) is open
-   (labels: renderer, enhancement). `gh` is installed + authenticated on this
-   machine now. Merge once reviewed.
+1. Merge PR [#17](https://github.com/brandonferree/ARCSdiscord/pull/17) (M3) →
+   then [#18](https://github.com/brandonferree/ARCSdiscord/pull/18) (M5) →
+   then the M4 PR. `gh` is installed + authenticated on this machine.
 
-## Then: M4 — Discord vertical slice (next milestone)
-Goal: play a real (small) Arcs decision through Discord end-to-end.
-- JDA bot: `/arcs new|join|start`, channel+role creation, seat→faction map.
-- On a `Turn`: post the board PNG + present `actions` as buttons/select; ping player.
-- On interaction: `EngineSession.apply` → append → advance → re-post.
-- Private hand/objective info via ephemeral/DM.
-- Keep `engine-bridge` the only module importing `arcs.*`/`hrf.*`.
-- The renderer is ready to call: `PathBRenderer.render(session, viewer)`; set
-  `RENDER_BROWSER_CHANNEL=chrome` locally on Windows. Reuse one long-lived renderer
-  (launching Chromium per render is the expensive part; it's not thread-safe —
-  serialise calls).
+## M4 — Discord vertical slice (turn loop done; live run untested)
+- `modules/bot` (JDA 5): `GameStore` (in-memory lifecycle), `TurnDriver` (pure
+  loop → `BotEffect`s), `GameCommands` (JDA adapter: `/arcs new|join|start|board|
+  moves|do`, buttons/select, seat-enforced).
+- **Verify headless:** `sbt "bot/runMain arcsbot.discord.BotDryRun [seed]"` — plays
+  a full game through the bot effects with the stub renderer (no token).
+- **Run live (needs a token):** `DISCORD_TOKEN=… [DISCORD_GUILD=…]
+  RENDER_BROWSER_CHANNEL=chrome sbt "bot/run"`. `DISCORD_GUILD` = instant guild
+  commands; `RENDER_STUB=1` skips the browser. The live path is NOT yet tested.
+- **Deferred follow-ups:** dedicated channel/role auto-creation, private hand/
+  objective via DM, SQL persistence, `/arcs undo|log`, intermission-report posts.
 
 ## M5 — full campaign (engine/bridge done 2026-06-25)
 - Bridge plays full Act I→III. Run `sbt "engineBridge/runMain arcsbot.engine.Repl

@@ -50,15 +50,26 @@ polish.
 - *Later refinements:* per-faction tableau cropping (`renderTableau`), viewer-gated
   private renders, and Path A (native compositor, M6).
 
-## M4 — Discord vertical slice ⬅ **next**
-**Goal:** play a real (small) Arcs decision through Discord end-to-end.
-- [ ] JDA bot: `/arcs new/join/start`, channel+role creation, seat→faction map.
-- [ ] On `Turn`: post board PNG + present `actions` as buttons/select; ping
-      player.
-- [ ] On interaction: `apply` → append → advance → re-post.
-- [ ] Private hand/objective info via ephemeral/DM.
-- **Demo:** 3–4 humans play the opening of an Arcs game asynchronously in a
-  Discord server.
+## M4 — Discord vertical slice 🟦 *(turn loop done 2026-06-25; live wiring untested)*
+**Goal:** play a real Arcs decision through Discord end-to-end.
+- [x] JDA bot (`modules/bot`, JDA 5): `/arcs new|join|start|board|moves|do`,
+      seat→faction map. `GameStore` is the in-memory lifecycle; `GameCommands` the
+      JDA adapter. (engine-bridge stays the only module importing `arcs.*`.)
+- [x] On `Turn`: `TurnDriver` posts the board PNG + presents `actions` as
+      buttons (≤5) / select menu (≤25), pinging the active player. Choices are
+      pure `BotEffect`s the JDA layer renders.
+- [x] On interaction: button/select → `EngineSession.apply` → append → advance →
+      re-post; seat-enforced (out-of-turn / no-seat rejected ephemerally).
+- [x] **Verified headless:** `sbt "bot/runMain arcsbot.discord.BotDryRun [seed]"`
+      plays a full game through the bot effects with the stub renderer (no Discord,
+      no token).
+- [ ] **Live run untested** — needs a `DISCORD_TOKEN` + guild. `Bot.main` is ready
+      (`DISCORD_TOKEN`, optional `DISCORD_GUILD` for instant commands; `RENDER_STUB=1`
+      to skip the browser).
+- [ ] *Deferred to a follow-up:* dedicated channel/role auto-creation, private
+      hand/objective via DM, SQL persistence (games are in-memory), `/arcs undo|log`.
+- **Demo (intended):** 3–4 humans play the opening of an Arcs game asynchronously
+  in a Discord server.
 
 ## M5 — Full Blighted Reach campaign 🟦 *(engine/bridge done 2026-06-25; UI polish in M4)*
 - [x] **Multi-act flow + Fates working through the bridge.** Root cause of the

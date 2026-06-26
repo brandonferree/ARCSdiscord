@@ -14,16 +14,42 @@ package arcsbot.discord
  * ===========================================================================*/
 
 import arcsbot.engine._
-import arcsbot.render.BoardRenderer
+import arcsbot.render.{BoardRenderer, PathBRenderer, RenderServer}
 
 object Bot {
 
-  /** Entry point. M4:
-    *   val jda = JDABuilder.createLight(token).addEventListeners(new GameCommands(...)).build()
-    *   register slash commands: /arcs new|join|options|start|board|moves|do|undo|log
-    */
+  /** Entry point. Reads the bot token from `DISCORD_TOKEN`; if `DISCORD_GUILD` is
+    * set, registers `/arcs` as an (instant) guild command, otherwise globally
+    * (can take up to ~1h to appear). The board renderer is Path B (headless
+    * Chromium) by default — set `RENDER_STUB=1` to use the 1×1 stub (no browser),
+    * and on Windows set `RENDER_BROWSER_CHANNEL=chrome`. */
   def main(args: Array[String]): Unit = {
-    println("arcs-discord bot scaffold — see docs/ROADMAP.md (Milestone 4).")
+    val token = sys.env.getOrElse("DISCORD_TOKEN", {
+      Console.err.println("DISCORD_TOKEN not set. Export your bot token and re-run.")
+      sys.exit(2)
+    })
+
+    val store = new GameStore()
+    val renderer: BoardRenderer =
+      if (sys.env.get("RENDER_STUB").contains("1")) BoardRenderer.Stub
+      else new PathBRenderer(RenderServer.fromRepo())
+    val driver = new TurnDriver(store.sessionOf, renderer, store.tables, store.seats)
+
+    val jda = net.dv8tion.jda.api.JDABuilder
+      .createLight(token)
+      .addEventListeners(new GameCommands(store, driver))
+      .build()
+    jda.awaitReady()
+
+    Option(System.getenv("DISCORD_GUILD")).flatMap(g => Option(jda.getGuildById(g))) match {
+      case Some(guild) =>
+        guild.updateCommands().addCommands(GameCommands.commandData).queue()
+        println(s"Registered /arcs as a guild command in ${guild.getName}.")
+      case None =>
+        jda.updateCommands().addCommands(GameCommands.commandData).queue()
+        println("Registered /arcs globally (may take up to ~1h to appear).")
+    }
+    println("arcs-discord bot is up.")
   }
 }
 
@@ -62,6 +88,10 @@ final class TurnDriver(
     }
   }
 
+  /** Render the current board on demand (for `/arcs board`). */
+  def renderCurrent(gameId: String): arcsbot.render.Render =
+    renderer.render(sessions(gameId), viewer = None)
+
   /** Handle a player clicking/typing a choice. */
   def choose(gameId: String, userId: String, optionIndex: Int): Vector[BotEffect] = {
     val session = sessions(gameId)
@@ -79,12 +109,13 @@ final class TurnDriver(
   private def present(gameId: String, session: EngineSession, turn: Turn): Vector[BotEffect] = {
     val publicBoard = renderer.render(session, viewer = None)
     val activeUser  = seats.userForSeat(gameId, turn.seat)
+    // Only present options a player can actually choose; Back/Cancel come through
+    // as their own buttons (TurnDriver leaves filtering of Info to the bridge).
     Vector(
       BotEffect.PostBoard(gameId, publicBoard),
-      // interactive controls go to the active player only (ephemeral/DM) so
-      // hidden info isn't leaked and only they can act:
-      BotEffect.PresentMoves(gameId, turn.seat, activeUser, turn.prompt, turn.options),
-      BotEffect.PingActive(gameId, turn.seat, activeUser)
+      // The move controls carry the @-ping for the active player, so a single
+      // message both notifies and presents (no separate PingActive needed here).
+      BotEffect.PresentMoves(gameId, turn.seat, activeUser, turn.prompt, turn.options)
     )
   }
 }
