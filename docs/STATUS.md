@@ -7,8 +7,12 @@ exact starting point for the next milestone. Read this first when resuming work.
 
 - **M1 (HRF engine on the JVM) — DONE.**
 - **M2 (Journal + EngineSession) — DONE.**
-- **Next: M3 — first board render** (see [RENDERING.md](RENDERING.md); Path B =
-  headless-browser screenshot of HRF's own Arcs UI → PNG).
+- **M3 (board render, Path B) — RENDERS FAITHFULLY.** The full pipeline produces a
+  real Arcs: Blighted Reach `board.png` at the requested action (verified: ~5.8 MB,
+  2133 sampled colours — populated tableaus, court, ambitions, fleets). The Windows
+  Chromium-launch blocker, the blank-board asset hang, and the Blighted-Reach
+  replay-fidelity bug are all root-caused and fixed. Remaining: Phase 4 CI gating;
+  see "M3 progress" below.
 
 Everything is on `main` and CI is green (compile + three headless smoke tests on
 JDK 17). GitHub issues #1–#8 are closed; #9–#16 remain.
@@ -81,19 +85,103 @@ Still scaffolds (stubs). M3 fills in `renderer`; M4 fills in `bot`.
    handling (private per-player options, secret selection) is the main remaining
    campaign gap. A non-`HostTest` game will hit this at the first intermission.
 
-## Starting point for M3
+## M3 progress (Path B board renderer, issue #9)
 
-Goal: given a journal (+ seating/options), produce `board.png`.
+Goal: given a journal (+ seating/options), produce `board.png` by driving HRF's
+real browser UI headless and screenshotting it. **This now works end-to-end** —
+a faithful Blighted Reach board (~5.8 MB, 2133 sampled colours: populated faction
+tableaus, court cards, ambitions, laws, and a map full of fleets at the requested
+action). See memory `m3-scalajs-build` for the deep build notes.
 
-- Read [RENDERING.md](RENDERING.md). Path B (fast cut) = drive a headless browser
-  (e.g. Playwright for JVM) against HRF's own Arcs UI pointed at the journal, and
-  screenshot the board. Path A (native JVM compositor) is M6.
-- The renderer should consume a *projection* of game state or the journal, not
-  import `arcs.*` directly if avoidable — keep `engine-bridge` the only
-  `arcs.*` importer (see ROADMAP cross-cutting rules). In practice Path B needs
-  the journal/log + HRF's web assets, not the JVM `Game` object.
-- Open issue: **#9** "BoardRenderer Path B (headless-browser screenshot)".
+**Done & verified:**
+- **Phase 0 — Scala.js build.** New `hrfWeb` project (`build.sbt`) compiles HRF's
+  vendored *browser* UI (Arcs + Blighted Reach) to JS + our Arcs-only shell
+  `hrf-web/src/.../hrf/Shell.scala` (replaces the un-vendorable upstream
+  `hrf.scala`). `sbt hrfWeb/fastLinkJS` → `hrf-web/target/scala-2.13/
+  hrf-web-fastopt/main.js`. Uses scalajs-dom 2.8.0 + a `package object ui` read
+  shim + a **build-time patch** of `grey/grey-map/runner` for the DOM assignments
+  2.x dropped (keeps `hrf-engine/` byte-for-byte pristine — re-applies on
+  re-vendor). Not aggregated into `root` yet (mirrors how M1 staged hrfEngine).
+- **Assets.** `assets/webp2/arcs/images/` holds the 1047 webp Arcs art files
+  (extracted from `hrfn-arcs-assets-*.zip`; layout `hrfn/arcs/assets/<X>` maps
+  1:1 to `webp2/arcs/images/<X>`). Git-ignored. **No hrf.im at runtime** — fully
+  self-hosted; the asset base is `?assets=` configurable.
+- **Phase 2 — exporter.** `EngineSession.replayBundle` + `ReplayBundle`
+  (`modules/engine-bridge/.../ReplayExport.scala`) emit HRF's `#lobby` + `#replay`
+  payloads (journal lines pass through verbatim — `writeActionExternal` ==
+  `Serialize.write`). `sbt "engineBridge/runMain arcsbot.engine.RenderExport"`
+  produced a real 95-line mid-game journal + correct lobby (`seating R Y B W`,
+  options incl. `Act1Only`).
 
-**First instruction for the M3 session:** "Read docs/STATUS.md and docs/RENDERING.md,
-then start M3 (issue #9): stand up `BoardRenderer` Path B — render a journal to
-board.png via a headless browser against HRF's Arcs UI."
+**Phase 3 — RENDERS (verified 2026-06-25):**
+- `modules/renderer/.../RenderServer.scala` (localhost static server: host page +
+  `main.js` + local `/webp2/` art), `PathBRenderer.scala` (Playwright Chromium →
+  full-page screenshot), `RenderSmoke.scala` (+ `InstallBrowser`).
+- **Launch blocker — root-caused & fixed.** It was never Defender. Playwright's
+  bundled Chromium-1134 hits a Windows **side-by-side activation failure** —
+  `chrome.exe` can't resolve its own private version assembly (`129.0.6668.29`),
+  surfacing as the misleading `spawn UNKNOWN`. Confirmed via the Application event
+  log (`SideBySide`) and a direct `chrome.exe` launch reproducing the SxS error
+  outside Playwright. Fix: `PathBRenderer` now honours **`RENDER_BROWSER_CHANNEL`**
+  (e.g. `chrome`/`msedge`) to drive the system-installed browser; unset = bundled
+  Chromium (so Linux/CI is unchanged). Run locally with `RENDER_BROWSER_CHANNEL=chrome`.
+- **Blank-board blocker — root-caused & fixed.** The board build runs inside
+  `loader.wait(<all immediate assets>)` (`Shell.scala`). HRF's `Cached*` loaders
+  (`hrf-engine/loader.scala`) did `cache.add(url).then{…}` with **no rejection
+  handler**, so a single 404 left that URL `Loading` forever and `wait` never
+  fired → blank page. The missing file is `webp2/arcs/images/f03/f03-25.webp`
+  (the mirror has `f03-25a/b`; HRF's asset list at `arcs/meta.scala:1025` lists
+  plain `f03-25` *and* `a/b`, while `f03-26` has only `a/b` — `f03-25` may be a
+  stale upstream entry). Fixes: the three `Cached*` loaders now call the
+  framework's `fail(url)` on rejection (it already treats `Error` as not-`Loading`,
+  so `wait` proceeds), and `Shell.scala` skips failed assets when building the
+  `loaded` map so `loader.get` doesn't throw. A missing asset now degrades
+  gracefully instead of blanking the board. **Requires `hrfWeb/fastLinkJS`** after
+  editing `loader.scala`/`Shell.scala`.
+- **Hardening done:** `RenderSmoke` now asserts visual content (samples a pixel
+  grid, requires ≥64 distinct colours) so a blank render can't pass the old
+  size-only gate. `PathBRenderer` construction now closes Playwright + the server
+  if `launch`/`newPage` throws (else the node driver's non-daemon threads hang the
+  JVM — this is what hung the prior session). Added `onResponse`/`onRequestFailed`
+  network diagnostics to the page logger.
+
+**Blighted-Reach replay-fidelity bug — ROOT-CAUSED & FIXED.** Renders used to throw
+(in the browser, swallowed by HRF) `NoSuchElementException: key not found: <faction>`
+in `arcs.BlightExpansion.perform` → `factionToState` reading an **empty** `game.states`,
+*and* the board canvas never appeared in time (the two were the same root cause).
+Diagnosis: a JVM-replay diagnostic (`engineBridge/runMain arcsbot.engine.ReplayCheck`,
+reads `replay.txt`) replayed the exact journal cleanly, proving the journal + rules
+are correct and the bug was browser-replay-specific. HRF's main replay loop
+(`runner.scala` `UIContinue`) performs `Force` continuations even with journal actions
+pending, but `Then`/`Milestone` only when the pending list is `Nil` — with actions
+pending they fell to the catch-all, which performed the next journal action and
+**skipped the forced one**. The campaign setup `ArcsBlightedReachStartAction`
+(populates `game.states`) is reached via `Then`, so it was skipped → empty states →
+crash at the first `FactionState` access (a fate crisis). HRF's own journals record
+`Then` actions; our engine-bridge journal is external-only (forced steps regenerated,
+like the JVM `EngineSession.replayStep`). Fix (build-time patches, `hrf-engine/` stays
+pristine):
+- `runner.scala`: perform `Then`/`Milestone` inline during replay, mirroring `Force`
+  (the Nil-only cases still win for live play, where they record). This is the fix
+  the headless renderer exercises.
+- `base.scala`: the analogous `Then`/`Milestone`-skip in the void replay used by
+  undo/scrub (`generateGameVoid` → `performVoid` → `mapForceLog`) — same class of bug,
+  fixed for consistency (not exercised by the headless one-shot render).
+
+**Exact next steps:**
+1. **Phase 4 — CI gating + ROADMAP.** Env-gate the smoke in CI (`RENDER_SMOKE=1`)
+   for headless-browser availability; on Windows runners set `RENDER_BROWSER_CHANNEL`.
+   Then update ROADMAP. Per-faction tableau cropping (`renderTableau`) and
+   viewer-gated private renders are later refinements.
+2. **Cosmetic: `f03/f03-25.webp` 404** (one missing mirror file; degrades gracefully
+   now). HRF's asset list has plain `f03-25` plus `f03-25a/b` while `f03-26` has only
+   `a/b`, so `f03-25` may be a stale upstream entry — confirm before chasing it.
+
+Run the render pipeline anytime:
+```bash
+sbt hrfWeb/fastLinkJS                                        # build the JS bundle (after any loader/Shell edit)
+sbt "engineBridge/runMain arcsbot.engine.RenderExport"       # write lobby.txt/replay.txt
+RENDER_BROWSER_CHANNEL=chrome \                              # Windows: use system Chrome (SxS fix)
+  sbt "renderer/runMain arcsbot.render.RenderSmoke 60"       # -> hrf-web/render-out/board.png
+```
+(PowerShell: `$env:RENDER_BROWSER_CHANNEL='chrome'; sbt "renderer/runMain arcsbot.render.RenderSmoke 60"`.)

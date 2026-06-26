@@ -42,3 +42,52 @@ jobs:
       # Enable once tests exist:
       # - name: Test
       #   run: sbt test
+
+  # Opt-in board-render smoke (M3, Path B). OFF by default: it needs BOTH a
+  # headless Chromium AND the Arcs art mirror (assets/webp2/..., which is
+  # .gitignored and extracted from an hrfn-arcs-assets zip), so the default CI
+  # above stays fast and self-contained. To enable, provision the assets on the
+  # runner (cache/artifact/download into assets/) and set the repository variable
+  # RENDER_SMOKE=1. RenderSmoke decodes board.png and asserts real visual content
+  # (>=64 distinct sampled colours), so it fails loudly if the board doesn't paint.
+  render:
+    if: ${{ vars.RENDER_SMOKE == '1' }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: sbt
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # Provision the Arcs art mirror into assets/ here (cache restore / artifact
+      # download / object-store fetch). Without it every immediate asset 404s and
+      # the board renders empty — the colour-count assertion will fail.
+
+      - name: Install Playwright Chromium
+        # On ubuntu the bundled Chromium launches fine (the Windows side-by-side
+        # failure that needs RENDER_BROWSER_CHANNEL=chrome does not apply here). If
+        # the browser fails to start, add a Playwright `install-deps` step for the
+        # OS libraries (libnss3, libgbm1, ...).
+        run: sbt "renderer/runMain arcsbot.render.InstallBrowser"
+
+      - name: Link the HRF Scala.js bundle
+        run: sbt hrfWeb/fastLinkJS
+
+      - name: Board render smoke (M3 — writes hrf-web/render-out/board.png)
+        run: sbt "renderer/runMain arcsbot.render.RenderSmoke 60"
+
+      - name: Upload board.png
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: board-render
+          path: hrf-web/render-out/board.png
+          if-no-files-found: ignore

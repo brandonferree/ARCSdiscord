@@ -5,8 +5,9 @@ get the HRF engine running headless on the JVM (M1) and a picture into Discord
 (M3) early, because those are the two unknowns. Everything after is content and
 polish.
 
-> **Status (2026-06-25): M1 and M2 are complete.** See [STATUS.md](STATUS.md) for
-> the detailed handoff (what's built, how to run it, and where M3 starts).
+> **Status (2026-06-25): M1, M2, and M3 are complete.** Path B renders a faithful
+> Blighted Reach board headless. See [STATUS.md](STATUS.md) for the detailed handoff
+> (what's built, how to run it, and where M4 starts).
 
 ## M0 — Foundation (this repo, now)
 - [x] Architecture docs grounded in HRF source.
@@ -33,13 +34,23 @@ polish.
   *(Commit 694dc2e.)* Caveat: multi-act Fates / hidden-info selection is deferred
   to M5 — the bridge surfaces those as `Rejected` for now.
 
-## M3 — First board render *(second unknown; Path B fast cut)* ⬅ **next**
+## M3 — First board render ✅ *(done 2026-06-25)*
 **Goal:** an image of the live board.
-- [ ] Stand up `BoardRenderer` (Path B: headless-browser screenshot of HRF's own
-      Arcs UI pointed at the journal). See RENDERING.
-- **Demo:** given a journal, output `board.png`.
+- [x] `BoardRenderer` Path B: a localhost `RenderServer` serves the host page + the
+      HRF Scala.js bundle + the local `/webp2/` art; `PathBRenderer` drives headless
+      Chromium (Playwright) to replay the journal and screenshot the board. See RENDERING.
+- [x] HRF browser UI cross-compiled to JS (`hrfWeb`, `sbt hrfWeb/fastLinkJS`) with an
+      Arcs-only shell; engine→renderer projection is `EngineSession.replayBundle`.
+- [x] Three blockers root-caused & fixed: Windows Chromium side-by-side launch
+      (`RENDER_BROWSER_CHANNEL`), a missing-asset 404 hanging the loader, and a
+      browser replay-fidelity bug (`Then`/`Milestone` skipped during replay).
+- [x] `RenderSmoke` asserts real visual content; opt-in CI render job (`RENDER_SMOKE=1`).
+- **Demo:** `RENDER_BROWSER_CHANNEL=chrome sbt "renderer/runMain arcsbot.render.RenderSmoke 60"`
+  → `hrf-web/render-out/board.png` (faithful Blighted Reach board at the requested action).
+- *Later refinements:* per-faction tableau cropping (`renderTableau`), viewer-gated
+  private renders, and Path A (native compositor, M6).
 
-## M4 — Discord vertical slice
+## M4 — Discord vertical slice ⬅ **next**
 **Goal:** play a real (small) Arcs decision through Discord end-to-end.
 - [ ] JDA bot: `/arcs new/join/start`, channel+role creation, seat→faction map.
 - [ ] On `Turn`: post board PNG + present `actions` as buttons/select; ping
