@@ -5,13 +5,17 @@ package arcsbot.engine
   * `create` / `pending` / `apply` / `load` work end-to-end without a browser.
   *
   * Modes:
-  *   selftest (default) — auto-play a full campaign game by picking a random
-  *                        legal option each turn, then verify the journal
-  *                        replays (load) back to the same game-over.
+  *   selftest (default) — auto-play a HostTest game (ends at act-1 setup) by
+  *                        picking a random legal option each turn, then verify the
+  *                        journal replays (load) back to the same game-over.
+  *   sqltest            — same, persisted through `SqlJournal` (+ conflict/reload).
+  *   m5probe [seed]     — auto-play a REAL full Act I→III campaign (`NoFate`) to
+  *                        game-over and verify replay. No seed → seeds 1–8. This
+  *                        is the M5 regression check (Fates / multi-act flow).
   *   play               — interactive: prints the prompt + numbered options and
   *                        reads a choice index from stdin.
   *
-  * Run: sbt "engineBridge/runMain arcsbot.engine.Repl [selftest|play]"
+  * Run: sbt "engineBridge/runMain arcsbot.engine.Repl [selftest|sqltest|m5probe|play]"
   */
 object Repl {
 
@@ -27,7 +31,11 @@ object Repl {
       case "play"     => play()
       case "selftest" => selftest()
       case "sqltest"  => sqltest()
-      case other      => println(s"unknown mode '$other' (use: selftest | sqltest | play)")
+      case "m5probe"  => args.lift(1).flatMap(_.toIntOption) match {
+        case Some(s) => m5probe(s)
+        case None    => 1.to(8).foreach(m5probe)
+      }
+      case other      => println(s"unknown mode '$other' (use: selftest | sqltest | m5probe | play)")
     }
 
   // -- SQL journal test ------------------------------------------------------
@@ -67,6 +75,56 @@ object Repl {
       }
       println("SQLTEST PASSED")
     } finally conn.close()
+  }
+
+  // -- M5 probe --------------------------------------------------------------
+
+  /** Drive a REAL campaign (no HostTest) with random legal choices until the
+    * bridge stops. Prints where it stops (GameOver vs Rejected) and the journal
+    * length, so we can see exactly what continuation the M5 intermission /
+    * Fate-selection produces. Run with BRIDGE_DEBUG=1 for the full stack trace. */
+  private def m5probe(seed: Int = 7): Unit = {
+    val opts = Seq("NoFate", "RandomPlayerOrder", "RandomizePlanetResources")
+    val rng = new scala.util.Random(seed)
+    val journal = new Journal.InMemory("m5probe")
+    val session = EngineSession.create(journal, Factions, opts)
+
+    var outcome = session.pending()
+    var turns = 0
+    var stop = false
+    while (!stop) outcome match {
+      case Outcome.Next(turn) =>
+        val choices = turn.options.filter(_.kind == MoveOption.Choice)
+        if (choices.isEmpty) {
+          // No actionable option: upstream's end-of-act "under development"
+          // terminal screen (YYSelectObjects with withRule(_ => false) + a
+          // dev-only proceed). For production HRF this is where the game stops.
+          println(s"m5probe: reached TERMINAL screen after $turns decisions, journal=${journal.size}")
+          println(s"  seat=${turn.seat.factionId} prompt=${turn.prompt.take(60)} options=${turn.options.map(o => o.kind).distinct.mkString(",")}")
+          stop = true
+        } else {
+          turns += 1
+          if (turns > 50000) sys.error("not progressing")
+          outcome = session.apply(turn.seat, choices(rng.nextInt(choices.size)).index)
+        }
+      case Outcome.GameOver(winners) =>
+        val w = if (winners.isEmpty) "Humanity" else winners.map(_.factionId).mkString(", ")
+        println(s"m5probe(seed=$seed): GAME OVER after $turns decisions, journal=${journal.size}, winner(s): $w")
+        // Replay fidelity: a fresh load of this full-campaign journal (Fates and
+        // all) must reconstruct to the same game-over.
+        val replay = new Journal.InMemory("m5replay")
+        journal.lines.foreach(l => replay.append(replay.size, l))
+        EngineSession.load(replay, Factions, opts).pending() match {
+          case Outcome.GameOver(w2) if w2.map(_.factionId).toSet == winners.map(_.factionId).toSet =>
+            println(s"  replay OK -> same game-over ($w)")
+          case other => sys.error(s"  replay MISMATCH: $other")
+        }
+        stop = true
+      case Outcome.Rejected(reason) =>
+        println(s"m5probe(seed=$seed): STOPPED after $turns decisions, journal=${journal.size}")
+        println(s"reason: $reason")
+        stop = true
+    }
   }
 
   // -- self-test -------------------------------------------------------------

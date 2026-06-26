@@ -54,6 +54,11 @@ final class PathBRenderer(
   private def note(s: String): Unit = logs.synchronized { logs += s; if (verbose) println("  page> " + s) }
   page.onConsoleMessage((m: ConsoleMessage) => note(s"[${m.`type`()}] ${m.text()}"))
   page.onPageError((e: String) => note(s"[pageerror] $e"))
+  // Surface the JS stack for uncaught errors (fastopt keeps Scala method names),
+  // so a browser-only MatchError can be traced to its source.
+  page.addInitScript(
+    "window.addEventListener('error', function(e){ try { console.log('JSERR ' + ((e.error && e.error.stack) || e.message)); } catch(x){} });" +
+    "window.addEventListener('unhandledrejection', function(e){ try { console.log('JSREJ ' + ((e.reason && e.reason.stack) || e.reason)); } catch(x){} });")
   page.onResponse((r: Response) => if (r.status() >= 400) note(s"[http ${r.status()}] ${r.url()}"))
   page.onRequestFailed((rq: Request) =>
     note(s"[reqfailed] ${rq.url()} — ${Option(rq.failure()).getOrElse("?")}"))

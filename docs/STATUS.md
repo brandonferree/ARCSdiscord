@@ -79,11 +79,20 @@ Still scaffolds (stubs). M3 fills in `renderer`; M4 fills in `bot`.
 2. **`HostTest` ends the game at act-1 setup** (`arcs/game-blight.scala:896`).
    The self-tests use it so a full game completes quickly. Real games omit it.
 
-3. **Fates / intermission hidden-info selection is M5, not done.** Those raise
-   "empty explode" / hidden-question; the bridge catches and returns
-   `Outcome.Rejected` rather than crashing. Implementing real Fate / hidden-info
-   handling (private per-player options, secret selection) is the main remaining
-   campaign gap. A non-`HostTest` game will hit this at the first intermission.
+3. **Fates / multi-act campaign — DONE (M5, 2026-06-25).** The bridge now plays
+   full Act I→III campaigns end-to-end (verified by `Repl m5probe`: random games
+   reach a real game-over and replay to the identical winner). Two fixes:
+   - **Interactive selects** (`YY/XXSelectObjectsAction` — Fates, hidden-info):
+     `EngineSession.decideAsk` was exposing HRF's un-pickable `HiddenChoice`
+     "explode" marker as an option (→ "unknown continue …ExplodeAction"). It now
+     does what HRF's own UI/bot do — `game.explode(_, false, None)`, then filter
+     `Hidden`/`Info`/`Unavailable`; degenerate selects fall through cleanly.
+   - **Acts II/III** are implemented upstream but gated by `MetaBR.development`
+     (`hrf.HRF.version.startsWith("test")`); the public build forces `Act1Only`.
+     We set `BuildInfo.version` = `test-0.8.140` (build.sbt) to enable them. The
+     default game config is now `NoFate` (`EngineSession.DefaultOptionIds`).
+     Note: `Act1Only` is not in dev-mode's `MetaBR.options`, so a journal built
+     with it desyncs the browser renderer (this was a render `MatchError`).
 
 ## M3 progress (Path B board renderer, issue #9)
 

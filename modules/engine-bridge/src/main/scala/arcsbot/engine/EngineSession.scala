@@ -145,6 +145,7 @@ final class EngineSession private (
       // A continuation this bridge doesn't yet handle (e.g. M5 intermission /
       // hidden-info Fate selection). Surface it instead of crashing the session.
       case e: Throwable =>
+        if (sys.env.contains("BRIDGE_DEBUG")) e.printStackTrace()
         result = Outcome.Rejected("engine reached an unsupported continuation: " + msg(e))
     }
     lastOutcome = result
@@ -185,21 +186,53 @@ final class EngineSession private (
     case other                          => sys.error("unhandled continuation: " + other)
   }
 
-  /** A raw `Ask`'s actions are high-level "explode" actions; the engine expands
-    * them into concrete performable leaves via `game.explode` (same call the bot
-    * AI makes, host.scala/bot.scala). A single raw action is already a leaf and
-    * is applied directly (host's `Ask(_, List(a))` behavior); otherwise we
-    * explode and present/auto-apply the leaves. The journal stores these leaves. */
-  private def decideAsk(f: Faction, actions: $[UserAction]): Step =
-    if (actions.num == 1) StepApply(actions.head)
-    else {
-      // explode can throw "empty explode" when the only leaves are hidden/soft
-      // (e.g. secret Fate selection — M5). Fall back to the raw actions so the
-      // session surfaces a decision rather than crashing.
-      val leaves = try game.explode(actions, false, None) catch { case _: Throwable => actions }
-      if (leaves.num == 1) StepApply(leaves.head)
-      else StepDecide(f, leaves)
+  /** Turn a raw `Ask` into the decision a player sees.
+    *
+    * Two shapes of `Ask` reach here:
+    *  - **Normal asks** whose actions are high-level "explode" actions; the
+    *    engine expands them into concrete performable leaves via `game.explode`
+    *    (the same call the bot AI makes — host.scala/bot.scala).
+    *  - **Interactive selects** (`YY/XXSelectObjectsAction`, used by Fates and
+    *    intermission hidden-info — M5). Their `Ask` is a soft select/deselect/
+    *    commit loop fronted by a `HiddenChoice` explode marker. `game.explode`
+    *    with `withSoft=false` throws "empty explode" on these because every
+    *    meaningful next step is soft, so we instead present the actions directly.
+    *
+    * Either way we filter exactly as the browser UI does (grey.scala): `Hidden`
+    * actions (the `HiddenChoice` explode marker, `HiddenCancelAction`, …) are
+    * never shown — exposing one and performing it is what produced the old
+    * "unknown continue on …ExplodeAction" crash. Soft select steps are applied
+    * one at a time and are not journaled (only the committed hard action is), so
+    * replay reconstructs the choice from that single committed line. */
+  private def decideAsk(f: Faction, actions: $[UserAction]): Step = {
+    // Prefer concrete leaves (the bot's `explode(_, false, None).notOf[Hidden]`).
+    // For a valid interactive select this yields the committed-choice leaves; for
+    // a degenerate one (nothing valid to pick) it throws "empty explode" and we
+    // fall back to the raw actions.
+    val expanded = try game.explode(actions, false, None) catch { case _: Throwable => actions }
+    val visible  = expanded.filter(_.is[Hidden].not)
+    // What a player can actually commit: not Info, not a disabled/unavailable
+    // option. (Soft Back/Cancel stay — they're legitimate buttons.)
+    val pickable = visible.filter(a => a.is[Info].not && a.is[Unavailable].not)
+
+    if (pickable.nonEmpty) {
+      // A lone concrete (non-soft) leaf is forced — auto-apply it. Anything with
+      // a real soft step (e.g. a select that re-asks for a commit) goes to the
+      // player so we never skip an interaction that still needs a decision.
+      if (pickable.num == 1 && pickable.head.isSoft.not) StepApply(pickable.head)
+      else StepDecide(f, pickable)
+    } else {
+      if (sys.env.contains("BRIDGE_DEBUG")) {
+        println(s"[decideAsk] no pickable option for $f; raw actions:")
+        actions.foreach { a =>
+          println(f"  ${a.getClass.getSimpleName}%-32s soft=${a.isSoft} hidden=${a.is[Hidden]} info=${a.is[Info]} unavail=${a.is[Unavailable]} cancel=${a.is[Cancel]} back=${a.is[Back]}  $a")
+        }
+      }
+      // Degenerate select: nothing valid to choose. Surface it so the drive loop
+      // doesn't spin (auto-cancel re-issues the same select forever).
+      StepDecide(f, visible)
     }
+  }
 
   // -- replay ----------------------------------------------------------------
 
@@ -317,8 +350,12 @@ object EngineSession {
     "SetupActTwo"              -> SetupActTwo
   )
 
-  /** Sensible default for a quick, valid Blighted Reach campaign game. */
-  val DefaultOptionIds: Seq[String] = Seq("Act1Only", "RandomPlayerOrder", "RandomizePlanetResources")
+  /** Sensible default for a valid full Blighted Reach campaign (Acts I–III).
+    * `NoFate` is the campaign-mode option the dev build (MetaBR.development, our
+    * `test-` version) defaults to; it lifts the public build's mandatory
+    * `Act1Only` gate. `Act1Only` is not listed in `MetaBR.options` under dev mode,
+    * so using it here would desync the renderer's lobby from the browser. */
+  val DefaultOptionIds: Seq[String] = Seq("NoFate", "RandomPlayerOrder", "RandomizePlanetResources")
 
   private def parseFaction(id: String): Faction =
     factionByName.getOrElse(id, sys.error(s"unknown faction '$id' (expected Red/White/Blue/Yellow)"))

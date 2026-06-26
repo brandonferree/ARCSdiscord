@@ -61,7 +61,7 @@ lazy val hrfEngine = (project in file("hrf-engine"))
         """package hrf
           |object BuildInfo {
           |  val name = "hrf-arcs"
-          |  val version = "0.8.140"  // vendored point-in-time HRF version
+          |  val version = "test-0.8.140"  // vendored HRF version; "test" prefix enables MetaBR.development (full Act I-III campaign, lifts mandatory Act1Only)
           |}
           |""".stripMargin)
       Seq(f)
@@ -197,7 +197,7 @@ lazy val hrfWeb = (project in file("hrf-web"))
         """package hrf
           |object BuildInfo {
           |  val name = "hrf-arcs"
-          |  val version = "0.8.140"  // vendored point-in-time HRF version
+          |  val version = "test-0.8.140"  // vendored HRF version; "test" prefix enables MetaBR.development (full Act I-III campaign, lifts mandatory Act1Only)
           |}
           |""".stripMargin)
       Seq(f)
