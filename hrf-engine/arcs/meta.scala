@@ -1022,7 +1022,6 @@ trait CommonMeta extends MetaGame {
         ImageAsset("f03-22") ::
         ImageAsset("f03-23") ::
         ImageAsset("f03-24") ::
-        ImageAsset("f03-25") ::
         ImageAsset("f03-25a") ::
         ImageAsset("f03-25b") ::
         ImageAsset("f03-26a") ::

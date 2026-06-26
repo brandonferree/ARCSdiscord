@@ -46,10 +46,10 @@ Small, action-focused. For full detail read [STATUS.md](STATUS.md); roadmap in
 - Remaining M5 is UI-side (M4): surface fate mode / intermission reports in Discord.
 
 ## Loose ends (small, optional)
-- **`f03/f03-25.webp` 404** (cosmetic; degrades gracefully). The mirror has
-  `f03-25a/b` but not plain `f03-25`. HRF's asset list (`arcs/meta.scala:1025`) has
-  plain `f03-25` *and* `a/b` while `f03-26` has only `a/b` — so `f03-25` may be a
-  stale upstream entry. Confirm before chasing.
+- ~~**`f03/f03-25.webp` 404**~~ FIXED 2026-06-26: it was a stale upstream entry.
+  No card/disk asset uses bare `f03-25` (fates use `f03-25a/b`, matching `f03-26a/b`);
+  removed `ImageAsset("f03-25")` from `arcs/meta.scala`. Needs Scala.js rebuild +
+  render restart to clear the 404 in a running render.
 - **Per-faction tableau cropping** (`PathBRenderer.renderTableau`) and viewer-gated
   private renders are first cut → later refinements.
 

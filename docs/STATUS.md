@@ -182,9 +182,10 @@ pristine):
    for headless-browser availability; on Windows runners set `RENDER_BROWSER_CHANNEL`.
    Then update ROADMAP. Per-faction tableau cropping (`renderTableau`) and
    viewer-gated private renders are later refinements.
-2. **Cosmetic: `f03/f03-25.webp` 404** (one missing mirror file; degrades gracefully
-   now). HRF's asset list has plain `f03-25` plus `f03-25a/b` while `f03-26` has only
-   `a/b`, so `f03-25` may be a stale upstream entry — confirm before chasing it.
+2. ~~**Cosmetic: `f03/f03-25.webp` 404**~~ FIXED 2026-06-26. Confirmed stale upstream
+   entry: no card/disk asset uses bare `f03-25` (fates use `f03-25a/b`, like `f03-26a/b`).
+   Removed `ImageAsset("f03-25")` from `arcs/meta.scala`. Clearing it in a running render
+   needs `hrfWeb/fastLinkJS` + render restart.
 
 Run the render pipeline anytime:
 ```bash
