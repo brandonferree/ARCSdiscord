@@ -107,6 +107,13 @@ final class EngineSession private (
     rebuild()
   }
 
+  /** Project this game into the strings HRF's browser replay UI consumes — the
+    * `#lobby` header (meta/version/title/seating/options in HRF's short-id wire
+    * form) and the `#replay` journal lines. The board renderer (Path B) injects
+    * these into the host page; nothing arcs.* leaks past this boundary. */
+  def replayBundle(title: String = "Arcs Render", at: Int = Int.MaxValue): ReplayBundle =
+    EngineSession.buildBundle(journal, factionIds, optionIds, title, at)
+
   // -- drive loop ------------------------------------------------------------
 
   /** Drive from the current `continue` through all automatic / oracle / single
@@ -354,6 +361,27 @@ object EngineSession {
     s.continue = s.game.performContinue(|(StartContinue), start, false).continue
     s.lastOutcome = s.advance()
     s
+  }
+
+  /** Build the HRF browser-replay projection from a journal + seating/options.
+    * `seating`/`options` are emitted in HRF's short-id wire form (what the
+    * browser's `readLobby` / `parseFaction` / `parseOption` expect); the replay
+    * lines are the journal verbatim — `MetaBR.writeActionExternal` is exactly
+    * `Serialize.write(a.unwrap)`, which is what the journal already stores. */
+  private[engine] def buildBundle(
+      journal: Journal, factionIds: Seq[String], optionIds: Seq[String],
+      title: String, at: Int): ReplayBundle = {
+    val seating = factionIds.map(id => MetaBR.writeFaction(parseFaction(id)))
+    val options = optionIds.map(id => MetaBR.writeOption(parseOption(id)))
+    val lobby = Seq(
+      "meta arcs-br",
+      "version " + version,
+      "title " + title,
+      "seating " + seating.mkString(" "),
+      "options " + options.mkString(" ")
+    )
+    val replay = journal.lines
+    ReplayBundle(lobby, replay, math.min(at, replay.length))
   }
 
   // internal step ADTs (top-level in the companion so the type tests have no

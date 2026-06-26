@@ -76,6 +76,160 @@ lazy val hrfEngine = (project in file("hrf-engine"))
     )
   )
 
+// --- Vendored HRF Arcs engine, cross-compiled to Scala.js (M3) --------------
+// Path B board renderer drives HRF's REAL browser UI headless. To do that we
+// compile the vendored *browser* sources (the DOM/canvas/sprites/ui code the
+// JVM build excludes) to JavaScript. This is the inverse of `hrfEngine`'s
+// excludeFilter: keep the browser sources, drop the *-jvm.scala shims and the
+// headless `BaseHost` (host.scala / arcs/host.scala use parallel collections).
+//
+// Two vendored files are NOT compiled and are replaced by our own arcs-only
+// shell (hrf-web/src): `hrf.scala` (its app shell references 10 other HRF games
+// that aren't vendored — only arcs/ is) and `quine.scala` (offline-bundle saver
+// we don't need). Our shell lives under hrf-web/src and provides `object hrf.HRF`
+// + `Callbacks`/`Quants` specialised to Arcs replay. See docs/RENDERING.md.
+//
+// NOT aggregated into root yet (mirrors how M1 staged hrfEngine): iterate with
+// `sbt hrfWeb/compile` until green, then wire it into the renderer pipeline.
+lazy val hrfWeb = (project in file("hrf-web"))
+  .enablePlugins(ScalaJSPlugin)
+  .settings(
+    name := "hrf-web",
+    // Our arcs-only shell lives in hrf-web/src/main/scala; ALSO pull in the
+    // vendored browser sources from hrf-engine/ (kept pristine).
+    Compile / unmanagedSourceDirectories += (ThisBuild / baseDirectory).value / "hrf-engine",
+    // Inverse of the JVM excludeFilter (build.sbt `hrfEngine`). Drop, by basename:
+    //  - *-jvm.scala shims (browser equivalents are the .scala/-js.scala files)
+    //  - host.scala / arcs/host.scala (headless BaseHost; parallel collections)
+    //  - hrf.scala / quine.scala (replaced by our arcs-only shell)
+    //  - old tracker variants (keep only new-new-new-tracker.scala, as JVM does)
+    //  - convert-images.scala (JVM build tooling)
+    // ...and anything under a `target/` dir (the hrf-engine source root we add
+    // below recurses into hrf-engine/target, which holds the JVM build's
+    // generated hrf/BuildInfo.scala — would clash with ours).
+    Compile / unmanagedSources / excludeFilter := new SimpleFileFilter({ f =>
+      val excludedNames = Set(
+        "reflect-jvm.scala", "log-jvm.scala", "grey-jvm.scala",
+        "timeline-jvm.scala", "host-jvm.scala", "host.scala",
+        "hrf.scala", "quine.scala",
+        "tracker.scala", "new-tracker.scala", "new-new-tracker.scala",
+        "convert-images.scala") ++
+        // Patched copies of these are generated below: grey/grey-map/runner for
+        // scalajs-dom 2.x facade compat, base.scala for the void-replay Then-follow
+        // fix. The originals are excluded so we compile the patched versions.
+        Set("grey.scala", "grey-map.scala", "runner.scala", "base.scala")
+      excludedNames(f.getName) ||
+        f.getAbsolutePath.replace('\\', '/').contains("/target/")
+    }),
+    // Build-time patch: keep hrf-engine/ byte-for-byte pristine while fixing the
+    // handful of DOM assignments scalajs-dom 2.x can't type. We copy the three
+    // affected files into a managed dir with targeted replacements:
+    //  - `style.touchAction = ` / `.filter = `  -> assign via js.Dynamic
+    //  - `recv.on(touch*|wheel) = f`            -> hrf.ui.touchy(recv).on... = f
+    // Re-applies automatically whenever HRF is re-vendored. See hrf/ui/DomCompat.
+    Compile / sourceGenerators += Def.task {
+      val outDir = (Compile / sourceManaged).value / "hrf-patched"
+      val base   = (ThisBuild / baseDirectory).value / "hrf-engine"
+
+      def handlers(s : String) =
+        s.replaceAll("""([\w.]+)\.(ontouchstart|ontouchmove|onwheel)(\s*=)""",
+                     "hrf.ui.touchy($1).$2$3")
+      def touchAction(s : String) =
+        s.replace(".style.touchAction = ", ".style.asInstanceOf[scalajs.js.Dynamic].touchAction = ")
+      def cssFilter(s : String) =
+        s.replace(".filter = ", ".asInstanceOf[scalajs.js.Dynamic].filter = ")
+      // Replay reconstructs a past board state via performVoid -> mapForceLog, which
+      // followed Force continuations but not Then/Milestone. Campaign setup (e.g.
+      // ArcsBlightedReachStartAction, which populates game.states) is reached via
+      // Then, so the void-replay game had empty faction states and threw
+      // `key not found: <faction>` at the first FactionState access (a fate crisis).
+      // Make the void mapForceLog follow Then + Milestone too, matching the JVM
+      // replay (engine-bridge EngineSession.replayStep). Targets the void mapForceLog
+      // only — the other Force case (the real perform) has a different body.
+      // Match the line content only (no trailing newline) so it is robust to
+      // CRLF/LF; the original line terminator follows the inserted Milestone line.
+      def voidReplayThen(s : String) =
+        s.replace(
+          "            case Force(a) => mapForceLog(performRawRecord(a, true).continue)",
+          "            case Force(a) => mapForceLog(performRawRecord(a, true).continue)\n" +
+          "            case Then(a) => mapForceLog(performRawRecord(a, true).continue)\n" +
+          "            case Milestone(_, a) => mapForceLog(performRawRecord(a, true).continue)")
+
+      // The browser's main replay loop performs Force continuations even while
+      // journal actions are still pending (UIContinue(Force(a), aa)), but Then /
+      // Milestone are only handled when the pending list is Nil (live play, where
+      // they get recorded). With actions pending they fall to the catch-all, which
+      // performs the next journal action and SKIPS the forced one. HRF's own
+      // journals record Then actions; our engine-bridge journal is external-only
+      // (forced steps regenerated), so the campaign setup ArcsBlightedReachStartAction
+      // (reached via Then, populates game.states) was skipped, leaving empty faction
+      // states -> `key not found: <faction>` at the first FactionState access.
+      // Perform Then/Milestone inline during replay, mirroring Force. Inserted before
+      // the catch-all; the earlier Nil-only Then/Milestone cases still win for live play.
+      def replayThenForced(s : String) =
+        s.replace(
+          "                case UIContinue(c, aa) =>",
+          "                case UIContinue(c @ Then(then), aa) =>\n" +
+          "                    dirty = true\n" +
+          "                    UIPerform(then, aa)\n\n" +
+          "                case UIContinue(c @ Milestone(_, then), aa) =>\n" +
+          "                    dirty = true\n" +
+          "                    UIPerform(then, aa)\n\n" +
+          "                case UIContinue(c, aa) =>")
+
+      def patch(name : String, f : String => String) : File = {
+        val dst = outDir / name
+        IO.write(dst, f(IO.read(base / name)))
+        dst
+      }
+
+      Seq(
+        patch("grey.scala",     s => handlers(touchAction(s))),
+        patch("grey-map.scala", s => handlers(touchAction(s))),
+        patch("runner.scala",   s => replayThenForced(cssFilter(s))),
+        patch("base.scala",     voidReplayThen)
+      )
+    }.taskValue,
+    // Same synthesized hrf.BuildInfo as the JVM build (keeps hrf-engine pristine).
+    Compile / sourceGenerators += Def.task {
+      val f = (Compile / sourceManaged).value / "hrf" / "BuildInfo.scala"
+      IO.write(f,
+        """package hrf
+          |object BuildInfo {
+          |  val name = "hrf-arcs"
+          |  val version = "0.8.140"  // vendored point-in-time HRF version
+          |}
+          |""".stripMargin)
+      Seq(f)
+    }.taskValue,
+    // Upstream HRF compiles with these language features enabled (postfix ops in
+    // runner.scala, the structural `BaseUI { val mmeta }` refinement, etc.).
+    scalacOptions ++= Seq(
+      "-language:postfixOps",
+      "-language:implicitConversions",
+      "-language:reflectiveCalls",
+      "-language:existentials",
+      "-language:higherKinds"
+    ),
+    // Boot from our Arcs-only shell. NoModule output so the host page can load the
+    // emitted main.js with a plain <script> tag (HRF reads a `#script` element).
+    scalaJSUseMainModuleInitializer := true,
+    Compile / mainClass := Some("hrf.HRF"),
+    scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.NoModule) },
+    libraryDependencies ++= Seq(
+      // HRF's browser canvas/touch code uses a handful of members no stock
+      // scalajs-dom facade carries together (MouseEvent.offsetX, touchAction,
+      // Element.ontouchstart/onwheel). We supply those via a `package object ui`
+      // shim (hrf-web/src .../ui/DomCompat.scala) so the vendored files stay
+      // pristine; 2.8.0 already provides dom.CSSStyleRule etc. that web.scala needs.
+      "org.scala-js"           %%% "scalajs-dom"               % "2.8.0",
+      "com.lihaoyi"            %%% "fastparse"                 % "3.0.2",
+      "com.lihaoyi"            %%% "pprint"                    % "0.7.0",
+      "com.lihaoyi"            %%% "fansi"                     % "0.4.0",
+      "org.scala-lang.modules" %%% "scala-collection-contrib" % "0.3.0"
+    )
+  )
+
 // Headless self-play CLI (M1 proof): drives a full Arcs: The Blighted Reach
 // game off-browser and prints the round-trippable journal. Reuses the vendored
 // arcs.CampaignHost (bot AI + oracle resolution).
@@ -101,10 +255,18 @@ lazy val engineBridge = (project in file("modules/engine-bridge"))
     )
   )
 
-// Game state -> PNG. See docs/RENDERING.md.
+// Game state -> PNG. See docs/RENDERING.md. Path B drives HRF's real browser UI
+// (compiled by `hrfWeb`) in headless Chromium via Playwright and screenshots the
+// board. The static server + asset mirror keep it self-hosted (no hrf.im at runtime).
 lazy val renderer = (project in file("modules/renderer"))
   .dependsOn(engineBridge)
-  .settings(name := "renderer")
+  .settings(
+    name := "renderer",
+    libraryDependencies += "com.microsoft.playwright" % "playwright" % "1.47.0",
+    // Default the renderer's repo-relative asset/build paths to this build's root.
+    Compile / run / fork := true,
+    Compile / run / baseDirectory := (ThisBuild / baseDirectory).value
+  )
 
 // The Discord application (JDA). Knows nothing about Arcs rules.
 lazy val bot = (project in file("modules/bot"))

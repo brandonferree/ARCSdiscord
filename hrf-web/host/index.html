@@ -1,0 +1,69 @@
+<!doctype html>
+<!--
+  Host page for the headless Arcs board renderer (M3, Path B).
+
+  The renderer (modules/renderer) serves this directory over http://localhost so
+  the Cache API (used by HRF's image loader) gets a secure context, injects the
+  game's journal into the #lobby / #replay divs below, and screenshots
+  #game-attachment-point once the board has painted.
+
+  Flags come from the query string (parsed by hrf.HRF.param):
+    ?replay&meta=arcs-br&at=<n>[&assets=<base>]
+  - replay        : use ReplayPhantomJournal built from the #replay div
+  - meta=arcs-br  : Arcs: The Blighted Reach (use "arcs" for the base game)
+  - at=<n>        : render the board state after n journal actions
+  - assets=<base> : optional prefix for the webp2/... asset URLs (default: this
+                    origin, i.e. a local mirror served alongside this page)
+
+  This scaffold is authored (not vendored): upstream HRF's index.html lives on its
+  server and is rebuilt by Quine from a live DOM we don't have. The element ids
+  here are exactly the ones the HRF browser code looks up via getElementById.
+-->
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link id="icon" rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>">
+    <!-- #settings carries HRF's data-* config; query-string flags override these. -->
+    <title id="settings" data-meta="arcs-br" data-replay="true" data-server="">Arcs Board Render</title>
+
+    <!-- HRF inserts CSS rules via document.styleSheets(0); it needs one stylesheet. -->
+    <style id="hrf-style">
+        html, body { margin: 0; padding: 0; background: #1a1410; }
+        /* Headless render surface — give the board room to lay out. */
+        #game-attachment-point { width: 100%; }
+        .hidden { display: none; }
+    </style>
+
+    <!-- Body/title fonts referenced by HRF (luminari / consolas fall back to serif/mono). -->
+    <style>
+        @font-face { font-family: "luminari"; src: local("Luminari"), local("Trattatello"); }
+        body { font-family: "luminari", "Palatino Linotype", Palatino, serif; }
+        .consolas, .code { font-family: Consolas, "Courier New", monospace; }
+    </style>
+</head>
+<body>
+    <!-- Hidden helper element HRF's web.clipboard() writes through. -->
+    <textarea id="clipboard" class="hidden"></textarea>
+
+    <!-- HRF root / game / chrome attachment points (looked up by id). -->
+    <div id="root-attachment-point">
+        <div id="font-size-adjust">
+            <div id="blurred-background"></div>
+            <div id="game-attachment-point"></div>
+            <div id="log" class="hidden"></div>
+            <div id="action" class="hidden"></div>
+            <div id="overlay" class="hidden"></div>
+        </div>
+    </div>
+
+    <!-- Injected per-render by the renderer (ReplayBundle.injectInto replaces the
+         tokens). #lobby = meta/version/title/seating/options; #replay = one
+         writeActionExternal line per journal action. -->
+    <div id="lobby" class="hidden"><!--LOBBY--></div>
+    <div id="replay" class="hidden"><!--REPLAY--></div>
+
+    <!-- The linked Scala.js bundle. id="script" matches HRF's lookup. -->
+    <script id="script" src="main.js"></script>
+</body>
+</html>

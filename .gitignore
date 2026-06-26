@@ -6,8 +6,14 @@ project/project/
 .metals/
 .bloop/
 
-# HRF Arcs art assets mirrored locally for the renderer (large; fetch separately)
+# HRF Arcs art assets mirrored locally for the renderer (large; fetch separately).
+# Populate assets/webp2/arcs/images/ by extracting an hrfn-arcs-assets zip (the
+# art's category layout `hrfn/arcs/assets/<X>` maps 1:1 to `webp2/arcs/images/<X>`).
 /assets/
+hrfn-arcs-assets-*.zip
+
+# Generated board-render outputs (RenderExport / RenderSmoke).
+/hrf-web/render-out/
 
 # Secrets
 .env
