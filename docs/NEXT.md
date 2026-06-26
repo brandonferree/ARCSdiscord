@@ -19,13 +19,16 @@ Small, action-focused. For full detail read [STATUS.md](STATUS.md); roadmap in
 - `modules/bot` (JDA 5): `GameStore` (in-memory lifecycle), `TurnDriver` (pure
   loop → `BotEffect`s), `GameCommands` (JDA adapter: `/arcs new|join|start|board|
   moves|do`, buttons/select, seat-enforced).
-- **Verify headless:** `sbt "bot/runMain arcsbot.discord.BotDryRun [seed]"` — plays
-  a full game through the bot effects with the stub renderer (no token).
-- **Run live (needs a token):** `DISCORD_TOKEN=… [DISCORD_GUILD=…]
+- **SQL persistence:** `GameRepository` (in-memory + SQLite) + `GameStore.reload()`.
+  Set `ARCS_DB=<path>` to persist; games resume on restart.
+- **Verify headless:** `sbt "bot/runMain arcsbot.discord.BotDryRun [seed]"` (full
+  game via bot effects) and `…BotPersistenceDryRun [seed]` (play → restart → resume
+  → finish, on SQLite). No token.
+- **Run live (needs a token):** `DISCORD_TOKEN=… [DISCORD_GUILD=…] [ARCS_DB=…]
   RENDER_BROWSER_CHANNEL=chrome sbt "bot/run"`. `DISCORD_GUILD` = instant guild
   commands; `RENDER_STUB=1` skips the browser. The live path is NOT yet tested.
 - **Deferred follow-ups:** dedicated channel/role auto-creation, private hand/
-  objective via DM, SQL persistence, `/arcs undo|log`, intermission-report posts.
+  objective via DM, `/arcs undo|log`, intermission-report posts.
 
 ## M5 — full campaign (engine/bridge done 2026-06-25)
 - Bridge plays full Act I→III. Run `sbt "engineBridge/runMain arcsbot.engine.Repl

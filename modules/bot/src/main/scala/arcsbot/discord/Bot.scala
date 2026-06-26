@@ -22,14 +22,27 @@ object Bot {
     * set, registers `/arcs` as an (instant) guild command, otherwise globally
     * (can take up to ~1h to appear). The board renderer is Path B (headless
     * Chromium) by default — set `RENDER_STUB=1` to use the 1×1 stub (no browser),
-    * and on Windows set `RENDER_BROWSER_CHANNEL=chrome`. */
+    * and on Windows set `RENDER_BROWSER_CHANNEL=chrome`. Set `ARCS_DB=<path>` to
+    * persist games in a SQLite file (resumed on restart); unset = in-memory. */
   def main(args: Array[String]): Unit = {
     val token = sys.env.getOrElse("DISCORD_TOKEN", {
       Console.err.println("DISCORD_TOKEN not set. Export your bot token and re-run.")
       sys.exit(2)
     })
 
-    val store = new GameStore()
+    val store = sys.env.get("ARCS_DB") match {
+      case Some(path) =>
+        Class.forName("org.sqlite.JDBC")
+        val conn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + path)
+        val s = new GameStore(GameRepository.Sql(conn), gid => SqlJournal(gid, conn))
+        val warns = s.reload()
+        warns.foreach(w => Console.err.println("[reload] " + w))
+        println(s"Persisting games to SQLite at $path.")
+        s
+      case None =>
+        println("In-memory games (set ARCS_DB=<path> to persist across restarts).")
+        new GameStore()
+    }
     val renderer: BoardRenderer =
       if (sys.env.get("RENDER_STUB").contains("1")) BoardRenderer.Stub
       else new PathBRenderer(RenderServer.fromRepo())

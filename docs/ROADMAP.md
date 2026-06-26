@@ -60,14 +60,18 @@ polish.
       pure `BotEffect`s the JDA layer renders.
 - [x] On interaction: button/select → `EngineSession.apply` → append → advance →
       re-post; seat-enforced (out-of-turn / no-seat rejected ephemerally).
-- [x] **Verified headless:** `sbt "bot/runMain arcsbot.discord.BotDryRun [seed]"`
-      plays a full game through the bot effects with the stub renderer (no Discord,
-      no token).
+- [x] **SQL persistence (optional).** `GameRepository` (in-memory + SQLite/Postgres)
+      stores the out-of-journal metadata (channel/role/seats/options/started);
+      `GameStore.reload()` rebuilds live sessions from `SqlJournal` on startup. Set
+      `ARCS_DB=<path>`; unset = in-memory.
+- [x] **Verified headless:** `BotDryRun` plays a full game through the bot effects
+      (stub renderer, no token); `BotPersistenceDryRun` plays partway on SQLite,
+      reopens a fresh store, resumes the identical state, and finishes the game.
 - [ ] **Live run untested** — needs a `DISCORD_TOKEN` + guild. `Bot.main` is ready
       (`DISCORD_TOKEN`, optional `DISCORD_GUILD` for instant commands; `RENDER_STUB=1`
-      to skip the browser).
+      to skip the browser; `ARCS_DB` to persist).
 - [ ] *Deferred to a follow-up:* dedicated channel/role auto-creation, private
-      hand/objective via DM, SQL persistence (games are in-memory), `/arcs undo|log`.
+      hand/objective via DM, `/arcs undo|log`.
 - **Demo (intended):** 3–4 humans play the opening of an Arcs game asynchronously
   in a Discord server.
 
