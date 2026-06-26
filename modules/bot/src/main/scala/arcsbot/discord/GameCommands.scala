@@ -33,7 +33,16 @@ import scala.jdk.CollectionConverters._
  * are DMed to them so hidden info isn't leaked, with a public fallback if the
  * player's DMs are closed (docs/DISCORD-UX.md).
  * ===========================================================================*/
-final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerAdapter {
+final class GameCommands(
+    store: GameStore,
+    driver: TurnDriver,
+    // gameId -> the public web-viewer URL (M7). Built in Bot.main from
+    // PUBLIC_BASE_URL (or the local server when unset); see `viewerPublic`.
+    viewerUrl: String => String = gid => s"(viewer not configured for $gid)",
+    // true once PUBLIC_BASE_URL is set — otherwise the link is loopback-only and
+    // the bot says so rather than handing players a URL that won't open for them.
+    viewerPublic: Boolean = false
+) extends ListenerAdapter {
 
   /** Encodes the option index into a component id, scoped to a game. */
   private def moveId(gameId: String, idx: Int) = s"m|$gameId|$idx"
@@ -75,9 +84,16 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
             case Left(err) => event.getHook.sendMessage(err).queue()
             case Right(_)  =>
               ensureRole(event, t)
-              event.getHook.sendMessage(s"**${t.name}** begins! Seating: ${t.factionIds.mkString(" → ")}").queue()
+              event.getHook.sendMessage(
+                s"**${t.name}** begins! Seating: ${t.factionIds.mkString(" → ")}\n" + viewerNote(t.gameId)).queue()
               execute(event, t.gameId, driver.advance(t.gameId))
           }
+        }
+
+      case "link" =>
+        withStarted(event, channelId) { t =>
+          // Public, so every player at the table gets the live board URL.
+          event.reply(viewerNote(t.gameId)).queue()
         }
 
       case "board" =>
@@ -298,6 +314,16 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
 
   private def properCase(s: String) = store.validFactions.find(_.equalsIgnoreCase(s)).getOrElse(s)
 
+  /** The "open the live board" line for a game. Full-res + zoomable in the
+    * player's own browser (M7), instead of Discord's re-compressed PNG. When
+    * PUBLIC_BASE_URL isn't set the URL is loopback-only, so we flag it as such
+    * rather than implying it's shareable. */
+  private def viewerNote(gameId: String): String = {
+    val url = viewerUrl(gameId)
+    if (viewerPublic) s"🔭 Full-res live board: $url"
+    else s"🔭 Full-res live board (local-only — set PUBLIC_BASE_URL to share): $url"
+  }
+
   // -- roles -----------------------------------------------------------------
 
   /** Create a mentionable `@arcs-<name>` role for the table and assign it to all
@@ -363,6 +389,7 @@ object GameCommands {
           .addOptions(new OptionData(OptionType.STRING, "faction", "Red/Yellow/Blue/White", true)),
         new SubcommandData("start", "Start the game once players have joined"),
         new SubcommandData("board", "Re-post the current board"),
+        new SubcommandData("link", "Get the full-res live web board URL"),
         new SubcommandData("moves", "Privately show your current legal options"),
         new SubcommandData("do", "Choose option number n")
           .addOptions(new OptionData(OptionType.INTEGER, "n", "Option index", true)),

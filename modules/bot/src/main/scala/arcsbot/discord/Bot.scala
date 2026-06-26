@@ -54,12 +54,20 @@ object Bot {
     // not-yet-started games fall through to a 404. The visitor's own browser does
     // the replay, so this is just the lobby/replay projection — no arcs.* leaks.
     server.games(id => store.table(id).flatMap(t => t.session.map(_.replayBundle(title = t.name))))
-    println(s"Web board viewer on ${server.baseUrl}/game/<id> (Phase 1: local; expose via tunnel for Phase 2).")
+    // M7 Phase 2: where players reach the viewer. PUBLIC_BASE_URL (e.g. a
+    // Cloudflare Tunnel hostname, no trailing slash) is the shareable base; unset
+    // falls back to the loopback server, which only works on this machine.
+    val publicBase  = sys.env.get("PUBLIC_BASE_URL").map(_.trim).filter(_.nonEmpty).map(_.stripSuffix("/"))
+    val viewerBase  = publicBase.getOrElse(server.baseUrl)
+    def viewerUrl(gameId: String): String = s"$viewerBase/game/$gameId"
+    println(
+      if (publicBase.isDefined) s"Web board viewer public at $viewerBase/game/<id>."
+      else s"Web board viewer (local only) on ${server.baseUrl}/game/<id> — set PUBLIC_BASE_URL to share.")
     val driver = new TurnDriver(store.sessionOf, renderer, store.tables, store.seats)
 
     val jda = net.dv8tion.jda.api.JDABuilder
       .createLight(token)
-      .addEventListeners(new GameCommands(store, driver))
+      .addEventListeners(new GameCommands(store, driver, viewerUrl, publicBase.isDefined))
       .build()
     jda.awaitReady()
 
