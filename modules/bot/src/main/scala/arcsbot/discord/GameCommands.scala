@@ -14,7 +14,7 @@ import net.dv8tion.jda.api.interactions.components.ActionRow
 import net.dv8tion.jda.api.interactions.commands.build.SlashCommandData
 import net.dv8tion.jda.api.utils.FileUpload
 import net.dv8tion.jda.api.entities.channel.concrete.{TextChannel, PrivateChannel}
-import net.dv8tion.jda.api.entities.Message
+import net.dv8tion.jda.api.entities.{Message, Role, Member}
 
 import scala.jdk.CollectionConverters._
 
@@ -74,6 +74,7 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
           store.start(t.gameId) match {
             case Left(err) => event.getHook.sendMessage(err).queue()
             case Right(_)  =>
+              ensureRole(event, t)
               event.getHook.sendMessage(s"**${t.name}** begins! Seating: ${t.factionIds.mkString(" → ")}").queue()
               execute(event, t.gameId, driver.advance(t.gameId))
           }
@@ -178,8 +179,9 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
 
       case BotEffect.AnnounceWinners(_, winners) =>
         channelOf(event, gameId).foreach { ch =>
-          val w = if (winners.isEmpty) "Humanity" else winners.map(_.factionId).mkString(", ")
-          ch.sendMessage(s"🏁 **Game over!** Winner(s): $w").queue()
+          val w    = if (winners.isEmpty) "Humanity" else winners.map(_.factionId).mkString(", ")
+          val ping = roleMention(gameId)
+          ch.sendMessage(s"$ping🏁 **Game over!** Winner(s): $w").queue()
         }
 
       case BotEffect.Notice(_, message) =>
@@ -282,6 +284,40 @@ final class GameCommands(store: GameStore, driver: TurnDriver) extends ListenerA
   }
 
   private def properCase(s: String) = store.validFactions.find(_.equalsIgnoreCase(s)).getOrElse(s)
+
+  // -- roles -----------------------------------------------------------------
+
+  /** Create a mentionable `@arcs-<name>` role for the table and assign it to all
+    * seated players, so game-wide events (start, game over, future intermissions)
+    * can ping everyone at once. Best-effort and async: if the bot lacks the
+    * *Manage Roles* permission (or its role sits below the new role in the
+    * hierarchy) the failures are logged and the game proceeds without a role —
+    * pings just fall back to no mention. No-op if a role already exists (re-runs)
+    * or the command came from outside a guild. */
+  private def ensureRole(event: SlashCommandInteractionEvent, t: GameStore#Table): Unit = {
+    if (t.roleId.isDefined) return
+    val guild = event.getGuild
+    if (guild == null) return
+    val members = t.seats.values.toVector.distinct
+    guild.createRole().setName(s"arcs-${t.name}").setMentionable(true).queue(
+      (role: Role) => {
+        store.setRole(t.gameId, role.getId)
+        members.foreach { uid =>
+          guild.retrieveMemberById(uid).queue(
+            (m: Member) => guild.addRoleToMember(m, role).queue(
+              (_: Void) => (),
+              (e: Throwable) => Console.err.println(s"[role] assign $uid in ${t.gameId}: ${e.getMessage}")),
+            (e: Throwable) => Console.err.println(s"[role] retrieve $uid in ${t.gameId}: ${e.getMessage}"))
+        }
+      },
+      (e: Throwable) =>
+        Console.err.println(s"[role] create for ${t.gameId} failed (bot needs Manage Roles): ${e.getMessage}")
+    )
+  }
+
+  /** `<@&roleId> ` if this game has a role, else empty — prefix for game-wide pings. */
+  private def roleMention(gameId: String): String =
+    store.table(gameId).flatMap(_.roleId).map(r => s"<@&$r> ").getOrElse("")
 
   // -- helpers ---------------------------------------------------------------
 
