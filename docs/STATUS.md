@@ -176,6 +176,18 @@ pristine):
 - `base.scala`: the analogous `Then`/`Milestone`-skip in the void replay used by
   undo/scrub (`generateGameVoid` → `performVoid` → `mapForceLog`) — same class of bug,
   fixed for consistency (not exercised by the headless one-shot render).
+- `runner.scala` (FIXED 2026-06-26): the **third** site of the same bug — the
+  per-record validation cross-check (`UIRecord` → `check.validate`) builds a check
+  game in `generateGame`/`generateGameVoid` with a local continuation-drain loop that
+  followed `Log` + `Force` but not `Then`/`Milestone`. The headless render *does*
+  exercise it (`generated check game at #N`), so every render after the campaign
+  setup spuriously logged `record validation failed … against check` +
+  `NoSuchElementException: key not found: <faction>` (e.g. Yellow). Swallowed as
+  `ErrorContinue` (the board rendered correctly from the main game), but it spammed
+  the render log and dropped a `bot.crash-*.log`. New build-time patch
+  `checkGameThenForced` follows `Then`/`Milestone` inline (bare + `DelayedContinue`
+  forms), mirroring `Force`; one `.replace` covers both `generateGame` and
+  `generateGameVoid` (the target line is byte-identical).
 
 **Exact next steps:**
 1. **Phase 4 — CI gating + ROADMAP.** Env-gate the smoke in CI (`RENDER_SMOKE=1`)

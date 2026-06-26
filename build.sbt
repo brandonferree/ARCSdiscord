@@ -177,6 +177,28 @@ lazy val hrfWeb = (project in file("hrf-web"))
           "                    UIPerform(then, aa)\n\n" +
           "                case UIContinue(c, aa) =>")
 
+      // The per-record validation cross-check (UIRecord -> check.validate) builds a
+      // fresh "check" game by replaying the recorded actions in generateGame /
+      // generateGameVoid, draining forced continuations in a local while loop. That
+      // loop followed Log + (DelayedContinue) Force but NOT Then/Milestone -- the same
+      // skip replayThenForced fixed in the main loop. So the check game's campaign
+      // setup (ArcsBlightedReachStartAction, reached via Then, populates game.states)
+      // was skipped, leaving empty faction states, and check.validate threw
+      // `key not found: <faction>` (e.g. Yellow). It is swallowed as ErrorContinue, so
+      // the board still rendered from the (correct) main game, but every per-record
+      // validation spuriously failed and spammed the render log + a crash file. Follow
+      // Then/Milestone inline, mirroring the existing Force case (bare + DelayedContinue
+      // forms). The target line is byte-identical in generateGame and generateGameVoid,
+      // so this single replace patches both. Match line content only (CRLF/LF robust).
+      def checkGameThenForced(s : String) =
+        s.replace(
+          "                    case DelayedContinue(_, Force(then)) => c = g.performContinue(|(g.continue), then, false).nest; true",
+          "                    case DelayedContinue(_, Force(then)) => c = g.performContinue(|(g.continue), then, false).nest; true\n" +
+          "                    case DelayedContinue(_, Then(then)) => c = g.performContinue(|(g.continue), then, false).nest; true\n" +
+          "                    case DelayedContinue(_, Milestone(_, then)) => c = g.performContinue(|(g.continue), then, false).nest; true\n" +
+          "                    case Then(then) => c = g.performContinue(|(g.continue), then, false).nest; true\n" +
+          "                    case Milestone(_, then) => c = g.performContinue(|(g.continue), then, false).nest; true")
+
       def patch(name : String, f : String => String) : File = {
         val dst = outDir / name
         IO.write(dst, f(IO.read(base / name)))
@@ -186,7 +208,7 @@ lazy val hrfWeb = (project in file("hrf-web"))
       Seq(
         patch("grey.scala",     s => handlers(touchAction(s))),
         patch("grey-map.scala", s => handlers(touchAction(s))),
-        patch("runner.scala",   s => replayThenForced(cssFilter(s))),
+        patch("runner.scala",   s => checkGameThenForced(replayThenForced(cssFilter(s)))),
         patch("base.scala",     voidReplayThen)
       )
     }.taskValue,
