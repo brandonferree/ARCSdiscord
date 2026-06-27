@@ -33,6 +33,18 @@ final class RenderServer(
 ) {
   @volatile private var currentPage: String = "<!doctype html><title>no render</title>"
   @volatile private var gameLookup: String => Option[ReplayBundle] = _ => None
+  // Per-request side-panel HTML for `/game/<id>`, injected before </body>. The bot
+  // supplies this; given the game id and the request's session cookie (if any) it
+  // returns the HTML to show THIS visitor — the authenticated seat-holder's hand,
+  // or a "Login with Discord" prompt for everyone else. Default = nothing, so the
+  // screenshot path and an un-wired server behave exactly as before. RenderServer
+  // stays dumb about users/seats: it only forwards the cookie and injects the
+  // string it gets back, so it can never leak private info on its own.
+  @volatile private var sidePanelFn: (String, Option[String]) => String = (_, _) => ""
+  // Extra request handlers the bot registers (e.g. the OAuth `/auth/*` routes),
+  // tried by path prefix before the built-in routes. Keeps the single HttpServer
+  // user-agnostic: the OAuth dance lives in the bot, wired in as a closure.
+  @volatile private var handlers: List[(String, HttpHandler)] = Nil
   private val template: String = new String(Files.readAllBytes(hostHtml), "UTF-8")
 
   // A web-serving variant of the host page. The screenshot path is served at `/`,
@@ -68,12 +80,30 @@ final class RenderServer(
     * closure means the renderer module never sees the bot's types. */
   def games(lookup: String => Option[ReplayBundle]): RenderServer = { gameLookup = lookup; this }
 
+  /** Wire the per-visitor side panel for `/game/<id>`. Given the game id and the
+    * request's `arcs_sid` cookie (if present), the bot returns the HTML to inject
+    * before `</body>` — the seat-holder's hand panel when the cookie authenticates
+    * a seated player in THIS game, otherwise a login prompt. The renderer never
+    * sees who that is; it just injects the returned string. */
+  def sidePanel(provide: (String, Option[String]) => String): RenderServer = { sidePanelFn = provide; this }
+
+  /** Register an extra handler for all paths under `prefix` (e.g. `/auth/`). These
+    * are matched before the built-in routes, so the bot can own `/auth/login` and
+    * `/auth/callback` (the OAuth dance) without the renderer knowing about Discord
+    * or sessions. Last registration for a given prefix wins. */
+  def handler(prefix: String, h: HttpHandler): RenderServer = { handlers = (prefix, h) :: handlers; this }
+
   def start(): RenderServer = { server.start(); this }
   def stop(): Unit = server.stop(0)
   def baseUrl: String = s"http://127.0.0.1:${server.getAddress.getPort}"
 
   private def route(ex: HttpExchange): Unit = {
     val path = ex.getRequestURI.getPath
+    // Bot-registered handlers (OAuth) win over the built-in static routes.
+    handlers.find { case (prefix, _) => path == prefix.stripSuffix("/") || path.startsWith(prefix) } match {
+      case Some((_, h)) => h.handle(ex); return
+      case None         =>
+    }
     path match {
       case "/" | "/index.html" => send(ex, 200, "text/html; charset=utf-8", currentPage.getBytes("UTF-8"))
       case "/main.js"          => sendFile(ex, mainJs, "application/javascript")
@@ -90,7 +120,11 @@ final class RenderServer(
   private def sendGame(ex: HttpExchange, id: String): Unit =
     gameLookup(id) match {
       case Some(bundle) =>
-        send(ex, 200, "text/html; charset=utf-8", bundle.injectInto(webTemplate).getBytes("UTF-8"))
+        // Inject the per-visitor side panel (hand or login prompt) before </body>.
+        // sidePanelFn decides what this cookie is allowed to see — never the renderer.
+        val panel = sidePanelFn(id, cookie(ex, RenderServer.SidCookie))
+        val page  = bundle.injectInto(webTemplate).replace("</body>", panel + "\n</body>")
+        send(ex, 200, "text/html; charset=utf-8", page.getBytes("UTF-8"))
       case None =>
         send(ex, 404, "text/html; charset=utf-8",
           s"<!doctype html><title>no game</title><body>No such game: $id".getBytes("UTF-8"))
@@ -105,6 +139,14 @@ final class RenderServer(
     else
       sendFile(ex, file, contentType(file))
   }
+
+  // Read one cookie value from the request's Cookie header (null-safe, trims OWS).
+  private def cookie(ex: HttpExchange, name: String): Option[String] =
+    Option(ex.getRequestHeaders.getFirst("Cookie")).flatMap { raw =>
+      raw.split(";").iterator.map(_.trim).collectFirst {
+        case kv if kv.startsWith(name + "=") => kv.drop(name.length + 1)
+      }
+    }
 
   private def contentType(p: Path): String = {
     val n = p.getFileName.toString
@@ -131,6 +173,11 @@ final class RenderServer(
 }
 
 object RenderServer {
+  /** The HttpOnly session-cookie name the bot's `/auth/callback` sets and the
+    * `/game/<id>` route reads to resolve a visitor's seat. Shared so both sides
+    * agree on the name. */
+  val SidCookie: String = "arcs_sid"
+
   /** Locate the repo-relative pieces from a base dir (default: the process CWD,
     * which sbt sets to the build root for `renderer/run`). */
   def fromRepo(base: Path = Paths.get(".").toAbsolutePath.normalize(), port: Int = 0): RenderServer =

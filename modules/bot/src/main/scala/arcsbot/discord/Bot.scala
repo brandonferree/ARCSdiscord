@@ -66,6 +66,31 @@ object Bot {
     println(
       if (publicBase.isDefined) s"Web board viewer public at $viewerBase/game/<id>."
       else s"Web board viewer (local only) on ${server.baseUrl}/game/<id> — set PUBLIC_BASE_URL to share.")
+
+    // M7 Phase 3: "Login with Discord" gate that unlocks the private hand panel on
+    // the web viewer. Only active when DISCORD_CLIENT_ID/SECRET are set; otherwise
+    // the viewer stays spectator-only exactly as before. The OAuth dance + session
+    // map live in DiscordOAuth (bot-side); RenderServer just routes `/auth/*` to it
+    // and injects whatever side-panel HTML the closure returns — it never sees a
+    // user, a seat, or a hand.
+    DiscordOAuth.fromEnv(webPort) match {
+      case Some(oauth) =>
+        server.handler("/auth/", oauth.handler)
+        // sid cookie -> Discord id -> the seat THIS user holds in THIS game -> that
+        // seat's own hand. This is the ONLY path that yields hand data; a spectator
+        // (no/stale cookie, or holds no seat here) resolves to None and gets the
+        // login prompt instead. Cross-seat leakage is impossible: handFor only ever
+        // reads the hand of the seat the authenticated user holds.
+        val handFor: (String, String) => Option[arcsbot.engine.PrivateView] = (gameId, userId) =>
+          store.seats.seatForUser(gameId, userId).flatMap(seat =>
+            store.table(gameId).flatMap(_.session).map(_.privateView(seat)))
+        server.sidePanel((gameId, sid) =>
+          HandPanel.forViewer(sid, oauth.loginUrl(gameId), oauth.resolve, uid => handFor(gameId, uid)))
+        println("Discord login enabled — a seated player can see their own hand on the web viewer.")
+      case None =>
+        println("Discord login NOT configured (set DISCORD_CLIENT_ID/SECRET) — web viewer is spectator-only.")
+    }
+
     val driver = new TurnDriver(store.sessionOf, renderer, store.tables, store.seats)
 
     val jda = net.dv8tion.jda.api.JDABuilder
