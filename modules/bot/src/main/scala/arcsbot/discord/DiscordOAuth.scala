@@ -194,34 +194,49 @@ object HandPanel {
       case None        => login(loginUrl)
     }
 
+  // A floating panel pinned to the BOTTOM-RIGHT corner, sized to its contents, so
+  // it tucks into the empty space there instead of covering the Court row along
+  // the top (which the old full-height right rail did). Cards grow leftward/up
+  // from the corner as the hand fills.
   private val shell =
-    "position:fixed;top:0;right:0;height:100%;width:240px;box-sizing:border-box;" +
-      "padding:12px;overflow-y:auto;background:rgba(20,16,10,.92);color:#e8dcc0;" +
-      "font-family:Consolas,monospace;font-size:13px;z-index:1000;" +
-      "border-left:1px solid #5a4a30"
+    "position:fixed;right:8px;bottom:8px;z-index:1000;box-sizing:border-box;" +
+      "max-width:520px;padding:8px 10px;background:rgba(20,16,10,.92);color:#e8dcc0;" +
+      "font-family:Consolas,monospace;font-size:12px;border:1px solid #5a4a30;" +
+      "border-radius:6px;box-shadow:0 2px 12px rgba(0,0,0,.55)"
 
   private def panel(v: PrivateView): String = {
     val cards =
       if (v.cards.isEmpty) "<div style='opacity:.6'>No cards in hand.</div>"
-      else v.cards.map(card).mkString
+      else s"""<div style="display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end">${v.cards.map(card).mkString}</div>"""
     s"""<div id="arcs-hand-panel" style="$shell">""" +
-      s"""<div style="font-weight:bold;margin-bottom:8px">Your hand &mdash; ${esc(v.seat.factionId)} (${v.count})</div>""" +
+      s"""<div style="font-weight:bold;margin-bottom:6px;text-align:right">Your hand &mdash; ${esc(v.seat.factionId)} (${v.count})</div>""" +
       cards +
       "</div>"
   }
 
-  // `data-arcs-hand` marks real private data — OAuthSecurityCheck asserts it is
-  // absent from any non-authenticated panel.
+  // Render each card as its HRF art (the same `/webp2/arcs/images/action/...`
+  // assets the board uses). The card name rides in alt/title, so a missing image
+  // still shows the label and hovering shows the full name. `data-arcs-hand` marks
+  // real private data — OAuthSecurityCheck asserts it is absent from any
+  // non-authenticated panel.
   private def card(c: PrivateCard): String =
-    s"""<div data-arcs-hand="1" style="padding:4px 6px;margin:3px 0;background:rgba(90,74,48,.35);border-radius:3px">""" +
-      s"""${esc(c.label)}${if (c.strength > 0) s" <span style='opacity:.6'>[${c.suit} ${c.strength}/${c.pips}]</span>" else ""}""" +
-      "</div>"
+    s"""<img data-arcs-hand="1" src="${esc(cardImage(c))}" alt="${esc(c.label)}" title="${esc(c.label)}" """ +
+      """width="84" loading="lazy" style="display:block;border-radius:4px;border:1px solid #000">"""
+
+  // Action-card art is named `<suit>-<strength>.webp` (construction-3.webp …);
+  // Event cards have a single `event.webp`. Suit names ("Construction"…) lowercase
+  // straight onto the filenames.
+  private def cardImage(c: PrivateCard): String = {
+    val suit = c.suit.toLowerCase
+    if (c.strength <= 0 || suit == "event") "/webp2/arcs/images/action/event.webp"
+    else s"/webp2/arcs/images/action/$suit-${c.strength}.webp"
+  }
 
   private def login(url: String): String =
     s"""<div id="arcs-hand-panel" style="$shell">""" +
-      """<div style="font-weight:bold;margin-bottom:8px">Spectating</div>""" +
-      s"""<a href="${esc(url)}" style="color:#9ad">Login with Discord</a>""" +
-      """<div style="opacity:.6;margin-top:8px">to see your hand if you hold a seat in this game.</div>""" +
+      """<div style="font-weight:bold;margin-bottom:6px;text-align:right">Spectating</div>""" +
+      s"""<div style="text-align:right"><a href="${esc(url)}" style="color:#9ad">Login with Discord</a></div>""" +
+      """<div style="opacity:.6;margin-top:6px;max-width:220px;text-align:right">to see your hand if you hold a seat in this game.</div>""" +
       "</div>"
 
   private def esc(s: String): String =
