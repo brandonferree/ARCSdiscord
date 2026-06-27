@@ -39,18 +39,25 @@ import java.util.concurrent.ConcurrentHashMap
   *                     `base + "/auth/callback"` and MUST be registered verbatim
   *                     in the Discord dev portal.
   * @param clientId     Discord application Client ID.
-  * @param clientSecret Discord application Client Secret (from `.env`, never committed). */
-final class DiscordOAuth(base: String, clientId: String, clientSecret: String) {
+  * @param clientSecret Discord application Client Secret (from `.env`, never committed).
+  * @param store        persistence for the session map; [[SessionStore.Ephemeral]] by
+  *                     default (in-memory), or a SQLite-backed store so sessions
+  *                     survive a bot restart. */
+final class DiscordOAuth(base: String, clientId: String, clientSecret: String,
+                         store: SessionStore = SessionStore.Ephemeral) {
   import DiscordOAuth._
 
   private val redirectUri = base.stripSuffix("/") + "/auth/callback"
   private val http        = HttpClient.newHttpClient()
   private val rng         = new SecureRandom()
 
-  // sid (cookie value) -> Discord user id. In-memory: sessions don't survive a
-  // bot restart, which is fine — the visitor just re-clicks "Login with Discord".
+  // sid (cookie value) -> Discord user id. Backed by `store`: seeded from it at
+  // startup and written through on login, so sessions survive a restart (unless
+  // the store is Ephemeral, in which case the visitor just re-clicks login).
   private val sessions = new ConcurrentHashMap[String, String]()
+  store.load().foreach { case (sid, uid) => sessions.put(sid, uid) }
   // CSRF state -> the game id the login started from (so callback returns there).
+  // In-memory only: a login in flight across a restart just needs re-clicking.
   private val states   = new ConcurrentHashMap[String, String]()
 
   /** Resolve a session cookie to its Discord user id (None if absent/unknown). */
@@ -94,6 +101,7 @@ final class DiscordOAuth(base: String, clientId: String, clientSecret: String) {
       case Some(uid) =>
         val sid = token()
         sessions.put(sid, uid)
+        store.put(sid, uid) // persist so a restart doesn't log them out
         // HttpOnly so page scripts can't read it; Secure only over https (omit on
         // localhost http). SameSite=Lax is fine — the callback is a top-level nav.
         val secure = if (base.startsWith("https")) "; Secure" else ""
@@ -153,15 +161,18 @@ object DiscordOAuth {
 
   /** Build from the environment, or None if not configured (spectator-only).
     * Requires `DISCORD_CLIENT_ID` + `DISCORD_CLIENT_SECRET`; the OAuth origin is
-    * `OAUTH_BASE` (default `http://localhost:<port>`). */
+    * `OAUTH_BASE` (default `http://localhost:<port>`). Sessions persist to `ARCS_DB`
+    * when it's set (same file as the games), else they're in-memory only. */
   def fromEnv(port: Int): Option[DiscordOAuth] =
     for {
       id     <- sys.env.get("DISCORD_CLIENT_ID").map(_.trim).filter(_.nonEmpty)
       secret <- sys.env.get("DISCORD_CLIENT_SECRET").map(_.trim).filter(_.nonEmpty)
     } yield {
-      val base = sys.env.get("OAUTH_BASE").map(_.trim).filter(_.nonEmpty)
+      val base  = sys.env.get("OAUTH_BASE").map(_.trim).filter(_.nonEmpty)
         .getOrElse(s"http://localhost:$port")
-      new DiscordOAuth(base.stripSuffix("/"), id, secret)
+      val store = sys.env.get("ARCS_DB").map(_.trim).filter(_.nonEmpty)
+        .map(path => new SessionStore.Sql(path)).getOrElse(SessionStore.Ephemeral)
+      new DiscordOAuth(base.stripSuffix("/"), id, secret, store)
     }
 }
 
