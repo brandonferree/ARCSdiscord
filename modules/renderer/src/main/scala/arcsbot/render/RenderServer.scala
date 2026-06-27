@@ -153,28 +153,37 @@ final class RenderServer(
       case None => send(ex, 404, "text/plain", "no game".getBytes("UTF-8"))
     }
 
-  // A small fixed refresh button + a poller injected into every game page. It
-  // checks `/rev/<id>` every few seconds; when the revision moves past the one
-  // baked in at load, the button lights up "New moves — refresh". We notify rather
-  // than auto-reload so a viewer mid-zoom isn't yanked back. (Phase 5 step 1; a
-  // future SSE/websocket push can replace the poll.)
+  // A small fixed control (refresh + auto toggle) and a poller injected into every
+  // game page. It checks `/rev/<id>` every few seconds; when the revision moves
+  // past the one baked in at load, it auto-reloads to the new board. The "Auto"
+  // toggle (persisted in localStorage) lets a viewer pause that while studying the
+  // board, in which case the button just lights "New moves — refresh" to click.
+  // (Phase 5 step 1; a future SSE/websocket push can replace the poll.)
   private def freshness(id: String, rev0: Long): String = {
     val idJs = "\"" + id.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
     s"""<script>(function(){
-  var id=$idJs, rev0=$rev0, btn;
+  var id=$idJs, rev0=$rev0, btn, auto, bs=
+    'padding:6px 10px;background:rgba(20,16,10,.92);color:#e8dcc0;border:1px solid #5a4a30;'+
+    'border-radius:6px;cursor:pointer;font:inherit';
+  function autoOn(){ try{return localStorage.getItem('arcs-auto')!=='off';}catch(e){return true;} }
+  function setAuto(v){ try{localStorage.setItem('arcs-auto',v?'on':'off');}catch(e){} auto.textContent='Auto: '+(v?'ON':'OFF'); }
   function mk(){
-    btn=document.createElement('button');
-    btn.id='arcs-refresh'; btn.textContent='↻ Refresh';
-    btn.style.cssText='position:fixed;left:8px;bottom:8px;z-index:1001;padding:6px 10px;'+
-      'background:rgba(20,16,10,.92);color:#e8dcc0;border:1px solid #5a4a30;border-radius:6px;'+
-      'font-family:Consolas,monospace;font-size:12px;cursor:pointer';
-    btn.onclick=function(){location.reload();};
-    document.body.appendChild(btn);
+    var wrap=document.createElement('div');
+    wrap.style.cssText='position:fixed;left:8px;bottom:8px;z-index:1001;display:flex;gap:6px;'+
+      'font-family:Consolas,monospace;font-size:12px';
+    btn=document.createElement('button'); btn.id='arcs-refresh'; btn.textContent='↻ Refresh';
+    btn.style.cssText=bs; btn.onclick=function(){location.reload();};
+    auto=document.createElement('button'); auto.id='arcs-auto'; auto.style.cssText=bs;
+    auto.onclick=function(){setAuto(!autoOn());};
+    setAuto(autoOn());
+    wrap.appendChild(btn); wrap.appendChild(auto); document.body.appendChild(wrap);
   }
   function poll(){
     fetch('/rev/'+encodeURIComponent(id),{cache:'no-store'}).then(function(r){return r.text();}).then(function(t){
       var n=parseInt(t,10);
-      if(!isNaN(n)&&n!==rev0&&btn){btn.textContent='↻ New moves — refresh';btn.style.background='#7a5a1a';btn.style.fontWeight='bold';}
+      if(isNaN(n)||n===rev0||!btn)return;
+      if(autoOn()){ btn.textContent='↻ Updating…'; setTimeout(function(){location.reload();},700); }
+      else { btn.textContent='↻ New moves — refresh'; btn.style.background='#7a5a1a'; btn.style.fontWeight='bold'; }
     }).catch(function(){});
   }
   if(document.body){mk();}else{window.addEventListener('DOMContentLoaded',mk);}
