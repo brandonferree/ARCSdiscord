@@ -138,6 +138,15 @@ lazy val hrfWeb = (project in file("hrf-web"))
         s.replace(".style.touchAction = ", ".style.asInstanceOf[scalajs.js.Dynamic].touchAction = ")
       def cssFilter(s : String) =
         s.replace(".filter = ", ".asInstanceOf[scalajs.js.Dynamic].filter = ")
+      // M7 Phase 5 step 2: register each board CanvasPane's zoom/pan with the shell
+      // so an SSE-driven refresh can save+restore the viewer's view (see Shell.scala
+      // hrf.HRF.registerCanvas / saveView). Injected into the CanvasPaneX ctor right
+      // after a stable local; zoomBase/dX/dY and draw() are all in scope there.
+      def registerCanvasView(s : String) =
+        s.replace(
+          "        var lastInteraction = -1000",
+          "        var lastInteraction = -1000\n" +
+          "        hrf.HRF.registerCanvas(() => scalajs.js.Array[Double](zoomBase, dX, dY), (a) => { zoomBase = a(0); dX = a(1); dY = a(2); draw() })")
       // Replay reconstructs a past board state via performVoid -> mapForceLog, which
       // followed Force continuations but not Then/Milestone. Campaign setup (e.g.
       // ArcsBlightedReachStartAction, which populates game.states) is reached via
@@ -206,7 +215,7 @@ lazy val hrfWeb = (project in file("hrf-web"))
       }
 
       Seq(
-        patch("grey.scala",     s => handlers(touchAction(s))),
+        patch("grey.scala",     s => registerCanvasView(handlers(touchAction(s)))),
         patch("grey-map.scala", s => handlers(touchAction(s))),
         patch("runner.scala",   s => checkGameThenForced(replayThenForced(cssFilter(s)))),
         patch("base.scala",     voidReplayThen)

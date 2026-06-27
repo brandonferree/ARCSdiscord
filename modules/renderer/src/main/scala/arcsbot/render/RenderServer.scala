@@ -70,7 +70,14 @@ final class RenderServer(
     def handle(ex: HttpExchange): Unit =
       try route(ex) catch { case e: Throwable => fail(ex, e) } finally ex.close()
   })
-  server.setExecutor(null)
+  // A real thread pool (not the single-threaded default): the SSE `/events/<id>`
+  // handler holds its thread open for the life of the connection, so it must not
+  // run on a shared dispatch thread or it would starve every other request. Daemon
+  // threads so they never keep the JVM alive. All handlers are read-only and the
+  // game/rev lookups are synchronized in GameStore, so concurrent serving is safe.
+  server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool(new java.util.concurrent.ThreadFactory {
+    def newThread(r: Runnable): Thread = { val t = new Thread(r, "render-http"); t.setDaemon(true); t }
+  }))
 
   /** Set the page served at `/` for the next navigation (host page + injected
     * lobby/replay). Returns this server for chaining. */
@@ -119,8 +126,9 @@ final class RenderServer(
       case "/main.js"          => sendFile(ex, mainJs, "application/javascript")
       case "/main.js.map"      => sendFile(ex, mainJs.resolveSibling("main.js.map"), "application/json")
       case p if p.startsWith("/webp2/") => sendAsset(ex, p)
-      case p if p.startsWith("/rev/")   => sendRev(ex, p.stripPrefix("/rev/"))
-      case p if p.startsWith("/game/")  => sendGame(ex, p.stripPrefix("/game/"))
+      case p if p.startsWith("/rev/")    => sendRev(ex, p.stripPrefix("/rev/"))
+      case p if p.startsWith("/events/") => sendEvents(ex, p.stripPrefix("/events/"))
+      case p if p.startsWith("/game/")   => sendGame(ex, p.stripPrefix("/game/"))
       case _                   => send(ex, 404, "text/plain", s"not found: $path".getBytes("UTF-8"))
     }
   }
@@ -153,12 +161,45 @@ final class RenderServer(
       case None => send(ex, 404, "text/plain", "no game".getBytes("UTF-8"))
     }
 
-  // A small fixed control (refresh + auto toggle) and a poller injected into every
-  // game page. It checks `/rev/<id>` every few seconds; when the revision moves
-  // past the one baked in at load, it auto-reloads to the new board. The "Auto"
-  // toggle (persisted in localStorage) lets a viewer pause that while studying the
-  // board, in which case the button just lights "New moves — refresh" to click.
-  // (Phase 5 step 1; a future SSE/websocket push can replace the poll.)
+  // M7 Phase 5 step 2: Server-Sent Events. Holds the connection open and pushes
+  // `data: <rev>` the instant a game's revision changes (server-side checks the
+  // cheap journal-length lookup each second), so a viewer updates immediately
+  // instead of waiting out a client poll. A comment ping keeps idle proxies from
+  // dropping the stream. Runs on a pool thread (see the executor above); returns
+  // when the client disconnects (write throws) or the game disappears.
+  private def sendEvents(ex: HttpExchange, id: String): Unit = {
+    if (revLookup(id).isEmpty) { send(ex, 404, "text/plain", "no game".getBytes("UTF-8")); return }
+    val h = ex.getResponseHeaders
+    h.add("Content-Type", "text/event-stream; charset=utf-8")
+    h.add("Cache-Control", "no-store")
+    h.add("Connection", "keep-alive")
+    ex.sendResponseHeaders(200, 0) // 0 = chunked/streaming, length unknown
+    val os = ex.getResponseBody
+    def write(s: String): Unit = { os.write(s.getBytes("UTF-8")); os.flush() }
+    try {
+      var last = revLookup(id).getOrElse(-1L)
+      write(s"retry: 3000\ndata: $last\n\n")
+      var ticks = 0
+      var live  = true
+      while (live) {
+        Thread.sleep(1000)
+        revLookup(id) match {
+          case Some(cur) if cur != last => last = cur; write(s"data: $cur\n\n")
+          case Some(_)                  => ticks += 1; if (ticks % 15 == 0) write(": ping\n\n")
+          case None                     => write("event: gone\ndata: 0\n\n"); live = false
+        }
+      }
+    } catch { case _: java.io.IOException | _: InterruptedException => () } // client gone / shutdown
+  }
+
+  // A small fixed control (refresh + auto toggle) plus a live SSE subscription
+  // injected into every game page. It subscribes to `/events/<id>`; when the
+  // pushed revision passes the one baked in at load, it reloads to the new board —
+  // but first calls `arcsSaveView()` (exported by the Scala.js app) to stash each
+  // board pane's zoom/pan in sessionStorage, which the next boot restores, so the
+  // refresh keeps the viewer's view instead of resetting to fit. The "Auto" toggle
+  // (localStorage) pauses auto-reload; then the button just lights up to click.
+  // Falls back to a /rev poll if the browser lacks EventSource. (Phase 5 step 2.)
   private def freshness(id: String, rev0: Long): String = {
     val idJs = "\"" + id.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
     s"""<script>(function(){
@@ -167,27 +208,37 @@ final class RenderServer(
     'border-radius:6px;cursor:pointer;font:inherit';
   function autoOn(){ try{return localStorage.getItem('arcs-auto')!=='off';}catch(e){return true;} }
   function setAuto(v){ try{localStorage.setItem('arcs-auto',v?'on':'off');}catch(e){} auto.textContent='Auto: '+(v?'ON':'OFF'); }
+  function saveView(){ try{ if(window.arcsSaveView) window.arcsSaveView(); }catch(e){} }
+  function reload(){ saveView(); location.reload(); }
   function mk(){
     var wrap=document.createElement('div');
     wrap.style.cssText='position:fixed;left:8px;bottom:8px;z-index:1001;display:flex;gap:6px;'+
       'font-family:Consolas,monospace;font-size:12px';
     btn=document.createElement('button'); btn.id='arcs-refresh'; btn.textContent='↻ Refresh';
-    btn.style.cssText=bs; btn.onclick=function(){location.reload();};
+    btn.style.cssText=bs; btn.onclick=reload;
     auto=document.createElement('button'); auto.id='arcs-auto'; auto.style.cssText=bs;
     auto.onclick=function(){setAuto(!autoOn());};
     setAuto(autoOn());
     wrap.appendChild(btn); wrap.appendChild(auto); document.body.appendChild(wrap);
   }
-  function poll(){
-    fetch('/rev/'+encodeURIComponent(id),{cache:'no-store'}).then(function(r){return r.text();}).then(function(t){
-      var n=parseInt(t,10);
-      if(isNaN(n)||n===rev0||!btn)return;
-      if(autoOn()){ btn.textContent='↻ Updating…'; setTimeout(function(){location.reload();},700); }
-      else { btn.textContent='↻ New moves — refresh'; btn.style.background='#7a5a1a'; btn.style.fontWeight='bold'; }
-    }).catch(function(){});
+  function update(n){
+    if(isNaN(n)||n===rev0||!btn)return;
+    if(autoOn()){ btn.textContent='↻ Updating…'; setTimeout(reload,250); }
+    else { btn.textContent='↻ New moves — refresh'; btn.style.background='#7a5a1a'; btn.style.fontWeight='bold'; }
+  }
+  function connect(){
+    if(window.EventSource){
+      var es=new EventSource('/events/'+encodeURIComponent(id));
+      es.onmessage=function(e){ update(parseInt(e.data,10)); };
+    } else { // legacy fallback: poll
+      setInterval(function(){
+        fetch('/rev/'+encodeURIComponent(id),{cache:'no-store'}).then(function(r){return r.text();})
+          .then(function(t){ update(parseInt(t,10)); }).catch(function(){});
+      },5000);
+    }
   }
   if(document.body){mk();}else{window.addEventListener('DOMContentLoaded',mk);}
-  setInterval(poll,5000);
+  connect();
 })();</script>"""
   }
 

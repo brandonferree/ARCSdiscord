@@ -25,6 +25,7 @@ import hrf.loader._
 import org.scalajs.dom
 
 import scalajs.js.timers.setTimeout
+import scalajs.js.annotation.JSExportTopLevel
 import scala.collection.mutable
 
 
@@ -65,6 +66,39 @@ object HRF {
     def paramInt(p : String) = param(p)./~(_.toIntOption)
 
     def paramList(p : String) = param(p)./~(_.split(' ').$)
+
+    // --- live view persistence (M7 Phase 5 step 2) ---------------------------
+    // Each board CanvasPane registers its (zoomBase, dX, dY) accessors here (a
+    // build-time patch to grey.scala adds the call in the CanvasPaneX ctor).
+    // `arcsSaveView()` — exported to JS below — snapshots them to sessionStorage
+    // just before an SSE-driven refresh; on the next boot each pane restores its
+    // own slot by registration index (panes are constructed in a fixed order for a
+    // given game, so the index is stable across reloads). Net effect: the live
+    // refresh keeps the viewer's zoom/pan instead of resetting to fit. Best-effort
+    // throughout — any storage/parse failure just falls back to the default view.
+    private val canvasGetters = mutable.ArrayBuffer[() => scalajs.js.Array[Double]]()
+
+    def registerCanvas(get : () => scalajs.js.Array[Double], set : scalajs.js.Array[Double] => Unit) : Unit = {
+        val i = canvasGetters.size
+        canvasGetters += get
+        try {
+            val raw = dom.window.sessionStorage.getItem("arcs-view-" + i)
+            if (raw != null) {
+                val p = raw.split(',')
+                if (p.length == 3) set(scalajs.js.Array(p(0).toDouble, p(1).toDouble, p(2).toDouble))
+            }
+        } catch { case _ : Throwable => }
+    }
+
+    def saveView() : Unit =
+        try {
+            var i = 0
+            while (i < canvasGetters.size) {
+                val v = canvasGetters(i)()
+                dom.window.sessionStorage.setItem("arcs-view-" + i, v(0).toString + "," + v(1).toString + "," + v(2).toString)
+                i += 1
+            }
+        } catch { case _ : Throwable => }
 
     var speed = paramInt("speed").|(640)
 
@@ -112,6 +146,16 @@ object HRF {
         else
             dom.window.onload = (e) => ArcsReplay.boot()
     }
+}
+
+
+// Exposes `window.arcsSaveView()` to the injected freshness script, which calls
+// it just before an SSE-driven refresh so the next boot can restore the viewer's
+// zoom/pan (see HRF.registerCanvas / HRF.saveView). @JSExportTopLevel keeps it in
+// the NoModule bundle even though nothing in Scala references it.
+object ArcsViewExport {
+    @JSExportTopLevel("arcsSaveView")
+    def save() : Unit = HRF.saveView()
 }
 
 
