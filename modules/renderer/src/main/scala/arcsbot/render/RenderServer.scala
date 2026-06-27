@@ -33,6 +33,11 @@ final class RenderServer(
 ) {
   @volatile private var currentPage: String = "<!doctype html><title>no render</title>"
   @volatile private var gameLookup: String => Option[ReplayBundle] = _ => None
+  // A cheap monotonic-ish "revision" for a game (its journal length): changes
+  // whenever a move is committed or undone, WITHOUT replaying the game. The
+  // `/game/<id>` page bakes in the rev at load and polls `/rev/<id>`; when it
+  // differs, the injected refresh button lights up (M7 Phase 5 freshness).
+  @volatile private var revLookup: String => Option[Long] = _ => None
   // Per-request side-panel HTML for `/game/<id>`, injected before </body>. The bot
   // supplies this; given the game id and the request's session cookie (if any) it
   // returns the HTML to show THIS visitor — the authenticated seat-holder's hand,
@@ -80,6 +85,11 @@ final class RenderServer(
     * closure means the renderer module never sees the bot's types. */
   def games(lookup: String => Option[ReplayBundle]): RenderServer = { gameLookup = lookup; this }
 
+  /** Wire the cheap freshness signal for `/rev/<id>`: a game's current revision
+    * (its journal length), without replaying it. The bot supplies this from its
+    * GameStore so the renderer never sees a session. */
+  def revs(lookup: String => Option[Long]): RenderServer = { revLookup = lookup; this }
+
   /** Wire the per-visitor side panel for `/game/<id>`. Given the game id and the
     * request's `arcs_sid` cookie (if present), the bot returns the HTML to inject
     * before `</body>` — the seat-holder's hand panel when the cookie authenticates
@@ -109,6 +119,7 @@ final class RenderServer(
       case "/main.js"          => sendFile(ex, mainJs, "application/javascript")
       case "/main.js.map"      => sendFile(ex, mainJs.resolveSibling("main.js.map"), "application/json")
       case p if p.startsWith("/webp2/") => sendAsset(ex, p)
+      case p if p.startsWith("/rev/")   => sendRev(ex, p.stripPrefix("/rev/"))
       case p if p.startsWith("/game/")  => sendGame(ex, p.stripPrefix("/game/"))
       case _                   => send(ex, 404, "text/plain", s"not found: $path".getBytes("UTF-8"))
     }
@@ -123,12 +134,53 @@ final class RenderServer(
         // Inject the per-visitor side panel (hand or login prompt) before </body>.
         // sidePanelFn decides what this cookie is allowed to see — never the renderer.
         val panel = sidePanelFn(id, cookie(ex, RenderServer.SidCookie))
-        val page  = bundle.injectInto(webTemplate).replace("</body>", panel + "\n</body>")
+        val fresh = freshness(id, revLookup(id).getOrElse(-1L))
+        val page  = bundle.injectInto(webTemplate).replace("</body>", panel + fresh + "\n</body>")
         send(ex, 200, "text/html; charset=utf-8", page.getBytes("UTF-8"))
       case None =>
         send(ex, 404, "text/html; charset=utf-8",
           s"<!doctype html><title>no game</title><body>No such game: $id".getBytes("UTF-8"))
     }
+
+  // M7 Phase 5: the cheap freshness probe. Returns the game's current revision as
+  // plain text (or 404), no-store so the poll always sees the live value. The open
+  // `/game/<id>` page compares this against the rev baked in at load.
+  private def sendRev(ex: HttpExchange, id: String): Unit =
+    revLookup(id) match {
+      case Some(rev) =>
+        ex.getResponseHeaders.add("Cache-Control", "no-store")
+        send(ex, 200, "text/plain; charset=utf-8", rev.toString.getBytes("UTF-8"))
+      case None => send(ex, 404, "text/plain", "no game".getBytes("UTF-8"))
+    }
+
+  // A small fixed refresh button + a poller injected into every game page. It
+  // checks `/rev/<id>` every few seconds; when the revision moves past the one
+  // baked in at load, the button lights up "New moves — refresh". We notify rather
+  // than auto-reload so a viewer mid-zoom isn't yanked back. (Phase 5 step 1; a
+  // future SSE/websocket push can replace the poll.)
+  private def freshness(id: String, rev0: Long): String = {
+    val idJs = "\"" + id.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+    s"""<script>(function(){
+  var id=$idJs, rev0=$rev0, btn;
+  function mk(){
+    btn=document.createElement('button');
+    btn.id='arcs-refresh'; btn.textContent='↻ Refresh';
+    btn.style.cssText='position:fixed;left:8px;bottom:8px;z-index:1001;padding:6px 10px;'+
+      'background:rgba(20,16,10,.92);color:#e8dcc0;border:1px solid #5a4a30;border-radius:6px;'+
+      'font-family:Consolas,monospace;font-size:12px;cursor:pointer';
+    btn.onclick=function(){location.reload();};
+    document.body.appendChild(btn);
+  }
+  function poll(){
+    fetch('/rev/'+encodeURIComponent(id),{cache:'no-store'}).then(function(r){return r.text();}).then(function(t){
+      var n=parseInt(t,10);
+      if(!isNaN(n)&&n!==rev0&&btn){btn.textContent='↻ New moves — refresh';btn.style.background='#7a5a1a';btn.style.fontWeight='bold';}
+    }).catch(function(){});
+  }
+  if(document.body){mk();}else{window.addEventListener('DOMContentLoaded',mk);}
+  setInterval(poll,5000);
+})();</script>"""
+  }
 
   // Serve an art file, guarding against path traversal outside the mirror.
   private def sendAsset(ex: HttpExchange, urlPath: String): Unit = {

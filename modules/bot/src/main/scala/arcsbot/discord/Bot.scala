@@ -57,6 +57,10 @@ object Bot {
     // not-yet-started games fall through to a 404. The visitor's own browser does
     // the replay, so this is just the lobby/replay projection — no arcs.* leaks.
     server.games(id => store.table(id).flatMap(t => t.session.map(_.replayBundle(title = t.name))))
+    // M7 Phase 5: cheap freshness signal — a game's journal length, no replay. The
+    // `/game/<id>` page polls `/rev/<id>` and lights its refresh button when this
+    // moves (a committed move or an undo).
+    server.revs(id => store.table(id).flatMap(_.session).map(_.journal.size))
     // M7 Phase 2: where players reach the viewer. PUBLIC_BASE_URL (e.g. a
     // Cloudflare Tunnel hostname, no trailing slash) is the shareable base; unset
     // falls back to the loopback server, which only works on this machine.
