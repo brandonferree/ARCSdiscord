@@ -146,8 +146,10 @@ final class RenderServer(
         val page  = bundle.injectInto(webTemplate).replace("</body>", panel + fresh + "\n</body>")
         send(ex, 200, "text/html; charset=utf-8", page.getBytes("UTF-8"))
       case None =>
+        // Escape the reflected id: it's the raw (url-decoded) path segment, so an
+        // unescaped reflection here is a reflected-XSS sink on the public origin.
         send(ex, 404, "text/html; charset=utf-8",
-          s"<!doctype html><title>no game</title><body>No such game: $id".getBytes("UTF-8"))
+          s"<!doctype html><title>no game</title><body>No such game: ${escHtml(id)}".getBytes("UTF-8"))
     }
 
   // M7 Phase 5: the cheap freshness probe. Returns the game's current revision as
@@ -259,6 +261,11 @@ final class RenderServer(
         case kv if kv.startsWith(name + "=") => kv.drop(name.length + 1)
       }
     }
+
+  // Minimal HTML-escape for any user-controlled value reflected into an HTML body
+  // (e.g. the requested game id on a 404). Keeps the renderer's reflections inert.
+  private def escHtml(s: String): String =
+    s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 
   private def contentType(p: Path): String = {
     val n = p.getFileName.toString
