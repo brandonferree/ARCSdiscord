@@ -25,6 +25,8 @@ application.conf.local
 bot.log
 bot.err.log
 bot.crash-*.log
+tunnel.log
+tunnel.out.log
 
 # OS / editor
 .DS_Store
