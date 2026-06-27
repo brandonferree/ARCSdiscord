@@ -200,7 +200,8 @@ object HandPanel {
   // from the corner as the hand fills.
   private val shell =
     "position:fixed;right:8px;bottom:8px;z-index:1000;box-sizing:border-box;" +
-      "max-width:520px;padding:8px 10px;background:rgba(20,16,10,.92);color:#e8dcc0;" +
+      "max-width:540px;max-height:calc(100vh - 16px);overflow-y:auto;" +
+      "padding:8px 10px;background:rgba(20,16,10,.92);color:#e8dcc0;" +
       "font-family:Consolas,monospace;font-size:12px;border:1px solid #5a4a30;" +
       "border-radius:6px;box-shadow:0 2px 12px rgba(0,0,0,.55)"
 
@@ -221,7 +222,7 @@ object HandPanel {
   // non-authenticated panel.
   private def card(c: PrivateCard): String =
     s"""<img data-arcs-hand="1" src="${esc(cardImage(c))}" alt="${esc(c.label)}" title="${esc(c.label)}" """ +
-      """width="84" loading="lazy" style="display:block;border-radius:4px;border:1px solid #000">"""
+      """width="68" loading="lazy" style="display:block;border-radius:4px;border:1px solid #000">"""
 
   // Action-card art is named `<suit>-<strength>.webp` (construction-3.webp …);
   // Event cards have a single `event.webp`. Suit names ("Construction"…) lowercase
