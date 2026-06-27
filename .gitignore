@@ -27,6 +27,8 @@ bot.err.log
 bot.crash-*.log
 tunnel.log
 tunnel.out.log
+tunnel-named-test.log
+tunnel-named-test.out.log
 
 # OS / editor
 .DS_Store
